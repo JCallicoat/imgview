@@ -76,6 +76,7 @@ protected:
   void paintEvent(QPaintEvent *event) override;
   void resizeEvent(QResizeEvent *event) override;
   void wheelEvent(QWheelEvent *event) override;
+  void keyPressEvent(QKeyEvent *event) override;
   void mousePressEvent(QMouseEvent *event) override;
   void mouseMoveEvent(QMouseEvent *event) override;
   void mouseReleaseEvent(QMouseEvent *event) override;
@@ -89,6 +90,7 @@ private:
   void zoomAt(double newScale, const QPointF &anchor);
   void updateCursor();
   void markInteracting();
+  void panBy(const QPointF &delta);
 
   // Kept as an ARGB32_Premultiplied QImage so the bicubic resampler can read
   // its pixels directly.

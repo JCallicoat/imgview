@@ -284,14 +284,46 @@ void ScaledImageLabel::mousePressEvent(QMouseEvent *event) {
   QLabel::mousePressEvent(event);
 }
 
+// Move the image by `delta` logical pixels (positive = image moves
+// right/down), clamped to the image edges.
+void ScaledImageLabel::panBy(const QPointF &delta) {
+  m_offset += delta;
+  markInteracting();
+  clampOffset();
+  update();
+}
+
+// Arrow keys pan while this view has focus and the image is larger than the
+// view. They move the view like scrollbars do (Right shows more of the right
+// side): 10% of the view per press, or exactly one image pixel with Shift
+// for stepping across fine detail. Other keys go up to the window.
+void ScaledImageLabel::keyPressEvent(QKeyEvent *event) {
+  int dx = 0, dy = 0;
+  switch (event->key()) {
+  case Qt::Key_Left:  dx = -1; break;
+  case Qt::Key_Right: dx = 1;  break;
+  case Qt::Key_Up:    dy = -1; break;
+  case Qt::Key_Down:  dy = 1;  break;
+  default:
+    QLabel::keyPressEvent(event);
+    return;
+  }
+  if (!canPan()) {
+    QLabel::keyPressEvent(event);
+    return;
+  }
+  QPointF step(width() * 0.1, height() * 0.1);
+  if (event->modifiers() & Qt::ShiftModifier)
+    step = QPointF(1.0, 1.0) * qMax(currentScale(), 1.0);
+  panBy(QPointF(-dx * step.x(), -dy * step.y()));
+  event->accept();
+}
+
 void ScaledImageLabel::mouseMoveEvent(QMouseEvent *event) {
   if (m_dragging) {
     const QPointF pos = event->position();
-    m_offset += pos - m_lastMousePos;
+    panBy(pos - m_lastMousePos);
     m_lastMousePos = pos;
-    markInteracting();
-    clampOffset();
-    update();
     event->accept();
     return;
   }
