@@ -19,8 +19,10 @@ public:
 
 protected:
   void keyPressEvent(QKeyEvent *event) override;
+  bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+  bool handleZoomKey(QKeyEvent *event);
   void createInfoPanel();
   void toggleInfoPanel();
 
@@ -39,11 +41,15 @@ public:
 
   QSize originalSize() const { return m_original.size(); }
 
+  // Keyboard zoom, anchored at the center of the view.
+  void zoomIn();
+  void zoomOut();
+  void resetZoom();
+
 protected:
   void paintEvent(QPaintEvent *event) override;
   void resizeEvent(QResizeEvent *event) override;
   void wheelEvent(QWheelEvent *event) override;
-  void keyPressEvent(QKeyEvent *event) override;
   void mousePressEvent(QMouseEvent *event) override;
   void mouseMoveEvent(QMouseEvent *event) override;
   void mouseReleaseEvent(QMouseEvent *event) override;

@@ -10,6 +10,7 @@ int main(int argc, char *argv[]) {
   std::atexit(Exiv2::XmpParser::terminate);
 
   QApplication app(argc, argv);
+  app.setWindowIcon(QIcon::fromTheme(QStringLiteral("image-x-generic")));
   if (argc < 2) {
     qWarning("Usage: %s <image_path>", argv[0]);
     return 1;

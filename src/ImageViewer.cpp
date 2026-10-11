@@ -4,9 +4,11 @@
 #include <QApplication>
 #include <QDebug>
 #include <QFileInfo>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
+#include <QLocale>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
@@ -183,26 +185,15 @@ void ScaledImageLabel::wheelEvent(QWheelEvent *event) {
   event->accept();
 }
 
-void ScaledImageLabel::keyPressEvent(QKeyEvent *event) {
-  switch (event->key()) {
-  case Qt::Key_Plus:
-  case Qt::Key_Equal:
-  case Qt::Key_Minus: {
-    const double factor =
-        (event->key() == Qt::Key_Minus) ? 1.0 / kZoomStep : kZoomStep;
-    zoomAt(currentScale() * factor, QRectF(rect()).center());
-    event->accept();
-    break;
-  }
-  case Qt::Key_0:
-    resetView();
-    event->accept();
-    break;
-  default:
-    QLabel::keyPressEvent(event);
-    break;
-  }
+void ScaledImageLabel::zoomIn() {
+  zoomAt(currentScale() * kZoomStep, QRectF(rect()).center());
 }
+
+void ScaledImageLabel::zoomOut() {
+  zoomAt(currentScale() / kZoomStep, QRectF(rect()).center());
+}
+
+void ScaledImageLabel::resetZoom() { resetView(); }
 
 void ScaledImageLabel::mousePressEvent(QMouseEvent *event) {
   if (event->button() == Qt::LeftButton && canPan()) {
@@ -240,6 +231,20 @@ void ScaledImageLabel::mouseReleaseEvent(QMouseEvent *event) {
 
 //-------------------- ImageViewer --------------------
 
+namespace {
+// "184.9 KiB (189345 bytes)"; plain "N bytes" below 1 KiB.
+QString formatFileSize(qint64 bytes) {
+  if (bytes <= 0)
+    return QStringLiteral("N/A");
+  if (bytes < 1024)
+    return QString("%1 bytes").arg(bytes);
+  // IEC format = powers of 1024 with KiB/MiB/GiB/... suffixes.
+  const QString human =
+      QLocale().formattedDataSize(bytes, 1, QLocale::DataSizeIecFormat);
+  return QString("%1 (%2 bytes)").arg(human).arg(bytes);
+}
+} // namespace
+
 ImageViewer::ImageViewer(const QString &imagePath, QWidget *parent)
     : QMainWindow(parent), m_imagePath(imagePath) {
   setWindowTitle("Image Viewer");
@@ -265,19 +270,26 @@ void ImageViewer::createInfoPanel() {
   QVBoxLayout *layout = new QVBoxLayout(panel);
   layout->setContentsMargins(8, 8, 8, 8);
 
-  // File size
-  QFileInfo fi(m_imagePath);
-  QString sizeStr =
-      fi.size() > 0 ? QString("%1 bytes").arg(fi.size()) : QString("N/A");
-  layout->addWidget(new QLabel(QString("<b>File size:</b> %1").arg(sizeStr)));
+  // File size and dimensions: bold key on the left, mouse-selectable value
+  // on the right (so selecting doesn't pick up the "File size:" text).
+  QFormLayout *form = new QFormLayout();
+  auto addRow = [form](const QString &key, const QString &value) {
+    QLabel *valueLabel = new QLabel(value);
+    valueLabel->setTextFormat(Qt::PlainText);
+    valueLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    valueLabel->setCursor(Qt::IBeamCursor);
+    form->addRow(new QLabel(QString("<b>%1</b>").arg(key)), valueLabel);
+  };
 
-  // Dimensions
+  QFileInfo fi(m_imagePath);
+  addRow("File size:", formatFileSize(fi.size()));
+
   if (!m_label->originalSize().isEmpty()) {
     int w = m_label->originalSize().width();
     int h = m_label->originalSize().height();
-    layout->addWidget(
-        new QLabel(QString("<b>Dimensions:</b> %1 × %2 px").arg(w).arg(h)));
+    addRow("Dimensions:", QString("%1 × %2 px").arg(w).arg(h));
   }
+  layout->addLayout(form);
 
   // EXIF data table
   QTableWidget *table = new QTableWidget(this);
@@ -294,6 +306,7 @@ void ImageViewer::createInfoPanel() {
   table->setSelectionBehavior(QTableWidget::SelectItems);
   table->setSelectionMode(QTableWidget::ExtendedSelection);
   table->setEditTriggers(QTableWidget::AllEditTriggers);
+  table->installEventFilter(this);
 
   try {
     auto image = Exiv2::ImageFactory::open(m_imagePath.toUtf8().constData());
@@ -340,7 +353,39 @@ void ImageViewer::toggleInfoPanel() {
   }
 }
 
+// Zoom keys live in the window rather than in ScaledImageLabel so they work
+// no matter which child has focus (e.g. after selecting text in the info
+// panel). Children that don't use a key pass it up to keyPressEvent().
+bool ImageViewer::handleZoomKey(QKeyEvent *event) {
+  switch (event->key()) {
+  case Qt::Key_Plus:
+  case Qt::Key_Equal:
+    m_label->zoomIn();
+    return true;
+  case Qt::Key_Minus:
+    m_label->zoomOut();
+    return true;
+  case Qt::Key_0:
+    m_label->resetZoom();
+    return true;
+  default:
+    return false;
+  }
+}
+
+// The EXIF table would otherwise eat these keys (type-to-edit and
+// keyboard search). While a cell is being edited the editor widget has
+// focus instead of the table, so typing in a cell is unaffected.
+bool ImageViewer::eventFilter(QObject *watched, QEvent *event) {
+  if (event->type() == QEvent::KeyPress &&
+      handleZoomKey(static_cast<QKeyEvent *>(event)))
+    return true;
+  return QMainWindow::eventFilter(watched, event);
+}
+
 void ImageViewer::keyPressEvent(QKeyEvent *event) {
+  if (handleZoomKey(event))
+    return;
   switch (event->key()) {
   case Qt::Key_Escape:
   case Qt::Key_Q:
