@@ -8,6 +8,7 @@
 #include <QPointF>
 #include <QString>
 #include <QTableWidget>
+#include <QTimer>
 
 class ScaledImageLabel;
 
@@ -22,18 +23,28 @@ protected:
   bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
-  bool handleZoomKey(QKeyEvent *event);
+  bool handleShortcutKey(QKeyEvent *event);
   void createInfoPanel();
   void toggleInfoPanel();
+  void toggleInterpolation();
+  void toggleFullScreen();
+  void updateWindowTitle();
 
   QString m_imagePath;
-  ScaledImageLabel *m_label;
+  ScaledImageLabel *m_label = nullptr;
   QWidget *m_infoPanel = nullptr;
 };
 
 class ScaledImageLabel : public QLabel {
   Q_OBJECT
 public:
+  // How the image is resampled when zoomed in past 100%. Zooming out always
+  // uses a smooth (area-averaging) downscale.
+  enum class Interpolation {
+    Nearest, // stored pixel values, unmodified (default)
+    Bicubic, // smoother, interpolated
+  };
+
   explicit ScaledImageLabel(QWidget *parent = nullptr);
   void setPixmap(const QPixmap &pixmap);
 
@@ -46,6 +57,21 @@ public:
   void zoomOut();
   void resetZoom();
 
+  // Zoom to exactly `scale` (1.0 = one image pixel per logical screen
+  // pixel), keeping the image point under `anchor` in place.
+  void setScale(double scale, const QPointF &anchor);
+
+  // Current image pixels -> logical screen pixels factor.
+  double currentScale() const;
+  bool isFitToWindow() const { return !m_manualZoom; }
+
+  Interpolation interpolation() const { return m_interpolation; }
+  void setInterpolation(Interpolation mode);
+
+signals:
+  // Scale, fit state or interpolation mode may have changed.
+  void viewChanged();
+
 protected:
   void paintEvent(QPaintEvent *event) override;
   void resizeEvent(QResizeEvent *event) override;
@@ -57,14 +83,16 @@ protected:
 private:
   void resetView();
   double fitScale() const;
-  double currentScale() const;
   QSizeF scaledSize() const;
   bool canPan() const;
   void clampOffset();
   void zoomAt(double newScale, const QPointF &anchor);
   void updateCursor();
+  void markInteracting();
 
-  QPixmap m_original;
+  // Kept as an ARGB32_Premultiplied QImage so the bicubic resampler can read
+  // its pixels directly.
+  QImage m_original;
   double m_zoomFactor = 1.0;
   bool m_manualZoom = false;
 
@@ -76,5 +104,20 @@ private:
   QPointF m_lastMousePos;
 
   // High-quality downscaled copy, only used when zoomed out (scale <= 1).
-  QPixmap m_scaledCache;
+  QImage m_scaledCache;
+
+  // Resampled rendering of the visible part when zoomed in, plus what it was
+  // rendered for, so plain repaints don't redo the resampling.
+  QImage m_viewportCache;
+  QPointF m_viewportCachePos;
+  QPointF m_viewportCacheOrigin;
+  double m_viewportCacheStep = 0.0;
+
+  // While panning/zooming, if rendering is too slow to keep up (last render
+  // took longer than a frame), draw a fast preview with QPainter and do the
+  // full render once the view has been still for a moment.
+  Interpolation m_interpolation = Interpolation::Nearest;
+  QTimer m_refineTimer;
+  bool m_interacting = false;
+  qint64 m_lastRenderMs = 0;
 };

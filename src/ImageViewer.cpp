@@ -1,8 +1,11 @@
 
 
 #include "ImageViewer.h"
+#include "Resample.h"
 #include <QApplication>
+#include <QCursor>
 #include <QDebug>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -28,21 +31,47 @@ namespace {
 constexpr double kMinZoom = 0.1;
 constexpr double kMaxZoom = 10.0;
 constexpr double kZoomStep = 1.1;
+// Renders slower than this use a quick QPainter preview while interacting.
+constexpr qint64 kInteractiveBudgetMs = 16;
+// How long the view must be still before the bicubic render.
+constexpr int kRefineDelayMs = 120;
 } // namespace
 
 ScaledImageLabel::ScaledImageLabel(QWidget *parent) : QLabel(parent) {
   setAlignment(Qt::AlignCenter);
   setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
   setFocusPolicy(Qt::StrongFocus);
+
+  m_refineTimer.setSingleShot(true);
+  m_refineTimer.setInterval(kRefineDelayMs);
+  connect(&m_refineTimer, &QTimer::timeout, this, [this] {
+    m_interacting = false;
+    update();
+  });
+}
+
+void ScaledImageLabel::setInterpolation(Interpolation mode) {
+  if (mode == m_interpolation)
+    return;
+  m_interpolation = mode;
+  m_viewportCache = QImage();
+  m_lastRenderMs = 0; // re-measure for the new mode
+  update();
+  emit viewChanged();
+}
+
+void ScaledImageLabel::markInteracting() {
+  m_interacting = true;
+  m_refineTimer.start(); // restarts if already running
 }
 
 void ScaledImageLabel::setPixmap(const QPixmap &pixmap) {
-  m_original = pixmap;
-  resetView();
+  setPixmap(pixmap.toImage());
 }
 
 void ScaledImageLabel::setPixmap(const QImage &image) {
-  m_original = QPixmap::fromImage(image);
+  m_original = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+  m_viewportCache = QImage();
   resetView();
 }
 
@@ -50,10 +79,11 @@ void ScaledImageLabel::resetView() {
   m_zoomFactor = 1.0;
   m_manualZoom = false;
   m_dragging = false;
-  m_scaledCache = QPixmap();
+  m_scaledCache = QImage();
   clampOffset();
   updateCursor();
   update();
+  emit viewChanged();
 }
 
 double ScaledImageLabel::fitScale() const {
@@ -111,9 +141,11 @@ void ScaledImageLabel::zoomAt(double newScale, const QPointF &anchor) {
   m_manualZoom = true;
   m_offset = anchor - imagePoint * newScale;
 
+  markInteracting();
   clampOffset();
   updateCursor();
   update();
+  emit viewChanged();
 }
 
 void ScaledImageLabel::updateCursor() {
@@ -137,27 +169,66 @@ void ScaledImageLabel::paintEvent(QPaintEvent *event) {
 
   if (scale * dpr <= 1.0) {
     // Zoomed out: cache a smoothly downscaled copy (never larger than the
-    // original). QPixmap::scaled() filters better than the painter's
+    // original). QImage::scaled() filters better than the painter's
     // bilinear sampling when shrinking a lot.
+    m_viewportCache = QImage();
     const QSize px = (QSizeF(m_original.size()) * scale * dpr).toSize();
     if (m_scaledCache.isNull() || m_scaledCache.size() != px) {
       m_scaledCache = m_original.scaled(px, Qt::IgnoreAspectRatio,
                                         Qt::SmoothTransformation);
       m_scaledCache.setDevicePixelRatio(dpr);
     }
-    painter.drawPixmap(m_offset, m_scaledCache);
+    painter.drawImage(m_offset, m_scaledCache);
   } else {
-    // Zoomed in: draw only the visible part of the original, scaled up by
-    // the painter. Memory use no longer grows with the zoom level.
-    m_scaledCache = QPixmap();
-    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    // Zoomed in: resample only the visible part of the original, at
+    // device-pixel resolution. Memory use doesn't grow with zoom.
+    m_scaledCache = QImage();
     const QRectF target(m_offset, scaledSize());
     const QRectF visible = target.intersected(QRectF(rect()));
     if (visible.isEmpty())
       return;
-    const QRectF source((visible.topLeft() - m_offset) / scale,
-                        visible.size() / scale);
-    painter.drawPixmap(visible, m_original, source);
+
+    // Visible area in whole device pixels.
+    const int dx0 = int(std::floor(visible.left() * dpr));
+    const int dy0 = int(std::floor(visible.top() * dpr));
+    const int dx1 = int(std::ceil(visible.right() * dpr));
+    const int dy1 = int(std::ceil(visible.bottom() * dpr));
+    const QPointF pos(dx0 / dpr, dy0 / dpr); // logical draw position
+    const QPointF origin = (pos - m_offset) / scale; // in source pixels
+    const double step = 1.0 / (scale * dpr);
+    const QSize outSize(dx1 - dx0, dy1 - dy0);
+
+    const bool cacheValid =
+        !m_viewportCache.isNull() && m_viewportCache.size() == outSize &&
+        m_viewportCachePos == pos && m_viewportCacheOrigin == origin &&
+        m_viewportCacheStep == step;
+
+    if (!cacheValid && m_interacting &&
+        m_lastRenderMs > kInteractiveBudgetMs) {
+      // Quick preview; m_refineTimer repaints with the full render shortly.
+      // Only smooth it in bicubic mode, so nearest never shows blending.
+      painter.setRenderHint(QPainter::SmoothPixmapTransform,
+                            m_interpolation == Interpolation::Bicubic);
+      const QRectF source((visible.topLeft() - m_offset) / scale,
+                          visible.size() / scale);
+      painter.drawImage(visible, m_original, source);
+      return;
+    }
+
+    if (!cacheValid) {
+      QElapsedTimer timer;
+      timer.start();
+      m_viewportCache =
+          m_interpolation == Interpolation::Nearest
+              ? resampleNearest(m_original, outSize, origin, step)
+              : resampleBicubic(m_original, outSize, origin, step);
+      m_viewportCache.setDevicePixelRatio(dpr);
+      m_viewportCachePos = pos;
+      m_viewportCacheOrigin = origin;
+      m_viewportCacheStep = step;
+      m_lastRenderMs = timer.elapsed();
+    }
+    painter.drawImage(pos, m_viewportCache);
   }
 }
 
@@ -168,8 +239,11 @@ void ScaledImageLabel::resizeEvent(QResizeEvent *event) {
     const QSizeF d = QSizeF(event->size() - event->oldSize()) / 2.0;
     m_offset += QPointF(d.width(), d.height());
   }
+  markInteracting();
   clampOffset();
   updateCursor();
+  if (!m_manualZoom)
+    emit viewChanged(); // fit-to-window scale follows the widget size
 }
 
 void ScaledImageLabel::wheelEvent(QWheelEvent *event) {
@@ -195,6 +269,10 @@ void ScaledImageLabel::zoomOut() {
 
 void ScaledImageLabel::resetZoom() { resetView(); }
 
+void ScaledImageLabel::setScale(double scale, const QPointF &anchor) {
+  zoomAt(scale, anchor);
+}
+
 void ScaledImageLabel::mousePressEvent(QMouseEvent *event) {
   if (event->button() == Qt::LeftButton && canPan()) {
     m_dragging = true;
@@ -211,6 +289,7 @@ void ScaledImageLabel::mouseMoveEvent(QMouseEvent *event) {
     const QPointF pos = event->position();
     m_offset += pos - m_lastMousePos;
     m_lastMousePos = pos;
+    markInteracting();
     clampOffset();
     update();
     event->accept();
@@ -247,7 +326,6 @@ QString formatFileSize(qint64 bytes) {
 
 ImageViewer::ImageViewer(const QString &imagePath, QWidget *parent)
     : QMainWindow(parent), m_imagePath(imagePath) {
-  setWindowTitle("Image Viewer");
   resize(800, 600);
 
   QWidget *central = new QWidget(this);
@@ -255,6 +333,9 @@ ImageViewer::ImageViewer(const QString &imagePath, QWidget *parent)
   QHBoxLayout *mainLayout = new QHBoxLayout(central);
 
   m_label = new ScaledImageLabel(this);
+  connect(m_label, &ScaledImageLabel::viewChanged, this,
+          &ImageViewer::updateWindowTitle);
+  updateWindowTitle();
   mainLayout->addWidget(m_label, 1);
 
   QPixmap pixmap(imagePath);
@@ -345,6 +426,36 @@ void ImageViewer::createInfoPanel() {
     mainLayout->addWidget(panel, 0);
 }
 
+void ImageViewer::toggleInterpolation() {
+  using Mode = ScaledImageLabel::Interpolation;
+  m_label->setInterpolation(m_label->interpolation() == Mode::Nearest
+                                ? Mode::Bicubic
+                                : Mode::Nearest);
+  updateWindowTitle();
+}
+
+// e.g. "Image Viewer [nearest, 3.138×]" or "[nearest, fit 0.421×]". The
+// mode is shown because it changes what the pixels mean; three decimals so a
+// near-1 wheel zoom can't be mistaken for exactly 1:1.
+void ImageViewer::updateWindowTitle() {
+  const bool nearest =
+      m_label->interpolation() == ScaledImageLabel::Interpolation::Nearest;
+  QString info = nearest ? "nearest" : "bicubic";
+  if (!m_label->originalSize().isEmpty()) {
+    info += QString(", %1%2×")
+                .arg(m_label->isFitToWindow() ? "fit " : "")
+                .arg(m_label->currentScale(), 0, 'f', 3);
+  }
+  setWindowTitle(QString("Image Viewer [%1]").arg(info));
+}
+
+void ImageViewer::toggleFullScreen() {
+  if (isFullScreen())
+    showNormal();
+  else
+    showFullScreen();
+}
+
 void ImageViewer::toggleInfoPanel() {
   if (!m_infoPanel) {
     createInfoPanel();
@@ -353,11 +464,38 @@ void ImageViewer::toggleInfoPanel() {
   }
 }
 
-// Zoom keys live in the window rather than in ScaledImageLabel so they work
+// All shortcuts live in the window rather than in child widgets so they work
 // no matter which child has focus (e.g. after selecting text in the info
 // panel). Children that don't use a key pass it up to keyPressEvent().
-bool ImageViewer::handleZoomKey(QKeyEvent *event) {
+bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
   switch (event->key()) {
+  case Qt::Key_Escape:
+    // Leave fullscreen first rather than quitting straight out of it.
+    if (isFullScreen())
+      showNormal();
+    else
+      close();
+    return true;
+  case Qt::Key_Q:
+    close();
+    return true;
+  case Qt::Key_M:
+    toggleInfoPanel();
+    return true;
+  case Qt::Key_I:
+    toggleInterpolation();
+    return true;
+  case Qt::Key_F:
+    toggleFullScreen();
+    return true;
+  case Qt::Key_R: {
+    // Actual size, centred on the pointer if it's over the image.
+    QPointF anchor = m_label->mapFromGlobal(QCursor::pos());
+    if (!m_label->rect().contains(anchor.toPoint()))
+      anchor = QRectF(m_label->rect()).center();
+    m_label->setScale(1.0, anchor);
+    return true;
+  }
   case Qt::Key_Plus:
   case Qt::Key_Equal:
     m_label->zoomIn();
@@ -373,29 +511,17 @@ bool ImageViewer::handleZoomKey(QKeyEvent *event) {
   }
 }
 
-// The EXIF table would otherwise eat these keys (type-to-edit and
+// The EXIF table would otherwise eat the shortcut keys (type-to-edit and
 // keyboard search). While a cell is being edited the editor widget has
 // focus instead of the table, so typing in a cell is unaffected.
 bool ImageViewer::eventFilter(QObject *watched, QEvent *event) {
   if (event->type() == QEvent::KeyPress &&
-      handleZoomKey(static_cast<QKeyEvent *>(event)))
+      handleShortcutKey(static_cast<QKeyEvent *>(event)))
     return true;
   return QMainWindow::eventFilter(watched, event);
 }
 
 void ImageViewer::keyPressEvent(QKeyEvent *event) {
-  if (handleZoomKey(event))
-    return;
-  switch (event->key()) {
-  case Qt::Key_Escape:
-  case Qt::Key_Q:
-    close();
-    break;
-  case Qt::Key_M:
-    toggleInfoPanel();
-    break;
-  default:
+  if (!handleShortcutKey(event))
     QMainWindow::keyPressEvent(event);
-    break;
-  }
 }
