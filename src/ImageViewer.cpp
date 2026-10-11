@@ -16,6 +16,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QResizeEvent>
+#include <QStatusBar>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -419,6 +420,18 @@ QString formatFileSize(qint64 bytes) {
 ImageViewer::ImageViewer(const QString &imagePath, QWidget *parent)
     : QMainWindow(parent), m_imagePath(imagePath) {
   resize(800, 600);
+
+  // Key hints. Keys are space-separated (',' and '-' are keys themselves).
+  // A minimum width of 1 lets the window shrink below the text width; the
+  // text is then clipped, with the full list still in the tooltip.
+  const QString hints = QStringLiteral(
+      "zoom: - + 0 r  |  pan: ← ↑ → ↓ (shift: 1 px)  |  interp: i  |  "
+      "invert: n  |  gamma: , . /  |  info: m  |  fullscreen: f  |  quit: q");
+  QLabel *hintLabel = new QLabel(hints, this);
+  hintLabel->setMinimumWidth(1);
+  hintLabel->setContentsMargins(6, 0, 0, 0);
+  hintLabel->setToolTip(hints);
+  statusBar()->addWidget(hintLabel, 1);
 
   QWidget *central = new QWidget(this);
   setCentralWidget(central);
