@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Resample.h"
+
 #include <QImage>
 #include <QLabel>
 #include <QMainWindow>
@@ -29,6 +31,7 @@ private:
   void toggleInterpolation();
   void toggleFullScreen();
   void toggleInverted();
+  void stepGamma(int delta);
   void updateWindowTitle();
 
   QString m_imagePath;
@@ -69,9 +72,18 @@ public:
   Interpolation interpolation() const { return m_interpolation; }
   void setInterpolation(Interpolation mode);
 
-  // Show the image with inverted colours (applied after resampling).
+  // Display tone adjustments, applied after resampling: optional colour
+  // inversion, then a gamma curve.
   bool isInverted() const { return m_inverted; }
   void setInverted(bool inverted);
+
+  // Gamma moves in equal multiplicative steps: gamma = 2^(step / 4), with
+  // step in [-kMaxGammaStep, kMaxGammaStep]. Positive steps darken (and
+  // stretch contrast among bright values), negative steps brighten.
+  static constexpr int kMaxGammaStep = 12;
+  int gammaStep() const { return m_gammaStep; }
+  void setGammaStep(int step);
+  double gamma() const;
 
 signals:
   // Scale, fit state or interpolation mode may have changed.
@@ -126,12 +138,17 @@ private:
   // full render once the view has been still for a moment.
   Interpolation m_interpolation = Interpolation::Nearest;
 
-  // Colour inversion is applied to the resampled image just before drawing.
-  // m_invertedCache holds the inverted copy of the render whose cacheKey()
-  // is m_invertedSourceKey, so it's redone only when the render changes.
+  // Tone adjustments (inversion + gamma) are applied to the resampled image
+  // just before drawing, through m_toneLut. m_adjustedCache holds the
+  // adjusted copy of the render whose cacheKey() is m_adjustedSourceKey;
+  // it's cleared whenever the tone settings change.
+  void rebuildToneLut();
   bool m_inverted = false;
-  QImage m_invertedCache;
-  qint64 m_invertedSourceKey = 0;
+  int m_gammaStep = 0;
+  bool m_toneIsIdentity = true;
+  ToneLut m_toneLut{};
+  QImage m_adjustedCache;
+  qint64 m_adjustedSourceKey = 0;
   QTimer m_refineTimer;
   bool m_interacting = false;
   qint64 m_lastRenderMs = 0;

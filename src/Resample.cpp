@@ -180,7 +180,16 @@ QImage resampleBicubic(const QImage &src, const QSize &outSize,
   return out;
 }
 
-void invertColors(QImage &img) {
+ToneLut buildToneLut(bool invert, double gamma) {
+  ToneLut lut;
+  for (int v = 0; v < 256; ++v) {
+    const double x = (invert ? 255 - v : v) / 255.0;
+    lut[v] = quint8(std::lround(255.0 * std::pow(x, gamma)));
+  }
+  return lut;
+}
+
+void applyLut(QImage &img, const ToneLut &lut) {
   if (img.isNull())
     return;
   Q_ASSERT(img.format() == QImage::Format_ARGB32_Premultiplied);
@@ -193,9 +202,17 @@ void invertColors(QImage &img) {
       for (int x = 0; x < w; ++x) {
         const QRgb p = line[x];
         const uint a = p >> 24;
-        // Premultiplied channels are <= alpha, so alpha - c stays valid.
-        line[x] = (a << 24) | ((a - ((p >> 16) & 0xff)) << 16) |
-                  ((a - ((p >> 8) & 0xff)) << 8) | (a - (p & 0xff));
+        if (a == 255) { // opaque: plain lookup
+          line[x] = 0xff000000u | (uint(lut[(p >> 16) & 0xff]) << 16) |
+                    (uint(lut[(p >> 8) & 0xff]) << 8) | lut[p & 0xff];
+        } else if (a != 0) { // translucent: map the straight colour
+          auto map = [&](uint c) {
+            const uint straight = (c * 255 + a / 2) / a;
+            return (uint(lut[std::min(straight, 255u)]) * a + 127) / 255;
+          };
+          line[x] = (a << 24) | (map((p >> 16) & 0xff) << 16) |
+                    (map((p >> 8) & 0xff) << 8) | map(p & 0xff);
+        } // fully transparent pixels stay as they are
       }
     }
   });

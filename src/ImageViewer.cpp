@@ -64,25 +64,46 @@ void ScaledImageLabel::setInverted(bool inverted) {
   if (inverted == m_inverted)
     return;
   m_inverted = inverted;
-  m_invertedCache = QImage();
+  rebuildToneLut();
+}
+
+void ScaledImageLabel::setGammaStep(int step) {
+  step = qBound(-kMaxGammaStep, step, kMaxGammaStep);
+  if (step == m_gammaStep)
+    return;
+  m_gammaStep = step;
+  rebuildToneLut();
+}
+
+double ScaledImageLabel::gamma() const {
+  return std::pow(2.0, m_gammaStep / 4.0);
+}
+
+// Called whenever a tone setting changes. A future curve type (levels,
+// S-curve) would be built here too.
+void ScaledImageLabel::rebuildToneLut() {
+  m_toneIsIdentity = !m_inverted && m_gammaStep == 0;
+  m_toneLut = buildToneLut(m_inverted, gamma());
+  m_adjustedCache = QImage();
   update();
   emit viewChanged();
 }
 
-// Returns `rendered`, or an inverted copy of it when inversion is on.
+// Returns `rendered` untouched when no tone adjustment is active (so the
+// true-pixel guarantee holds exactly), otherwise a tone-mapped copy.
 const QImage &ScaledImageLabel::forDisplay(const QImage &rendered) {
-  if (!m_inverted)
+  if (m_toneIsIdentity)
     return rendered;
-  if (m_invertedCache.isNull() ||
-      m_invertedSourceKey != rendered.cacheKey()) {
+  if (m_adjustedCache.isNull() ||
+      m_adjustedSourceKey != rendered.cacheKey()) {
     // convertToFormat() is a no-op for the formats used here, and
-    // invertColors() then detaches, so `rendered` itself is untouched.
-    m_invertedCache =
+    // applyLut() then detaches, so `rendered` itself is untouched.
+    m_adjustedCache =
         rendered.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-    invertColors(m_invertedCache);
-    m_invertedSourceKey = rendered.cacheKey();
+    applyLut(m_adjustedCache, m_toneLut);
+    m_adjustedSourceKey = rendered.cacheKey();
   }
-  return m_invertedCache;
+  return m_adjustedCache;
 }
 
 void ScaledImageLabel::markInteracting() {
@@ -232,15 +253,24 @@ void ScaledImageLabel::paintEvent(QPaintEvent *event) {
         m_lastRenderMs > kInteractiveBudgetMs) {
       // Quick preview; m_refineTimer repaints with the full render shortly.
       // Only smooth it in bicubic mode, so nearest never shows blending.
-      painter.setRenderHint(QPainter::SmoothPixmapTransform,
-                            m_interpolation == Interpolation::Bicubic);
+      const bool smooth = m_interpolation == Interpolation::Bicubic;
       const QRectF source((visible.topLeft() - m_offset) / scale,
                           visible.size() / scale);
-      painter.drawImage(visible, m_original, source);
-      if (m_inverted) {
-        // Preview only: invert on screen (white "difference" = 255 - v).
-        painter.setCompositionMode(QPainter::CompositionMode_Difference);
-        painter.fillRect(visible, Qt::white);
+      if (m_toneIsIdentity) {
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, smooth);
+        painter.drawImage(visible, m_original, source);
+      } else {
+        // Draw the preview off-screen so the tone curve can be applied.
+        QImage preview(outSize, QImage::Format_ARGB32_Premultiplied);
+        preview.setDevicePixelRatio(dpr);
+        preview.fill(Qt::transparent);
+        QPainter p(&preview);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, smooth);
+        p.translate(-pos);
+        p.drawImage(visible, m_original, source);
+        p.end();
+        applyLut(preview, m_toneLut);
+        painter.drawImage(pos, preview);
       }
       return;
     }
@@ -496,7 +526,8 @@ void ImageViewer::toggleInterpolation() {
   updateWindowTitle();
 }
 
-// e.g. "Image Viewer [nearest, 3.138×]" or "[nearest, inverted, fit 0.421×]". The
+// e.g. "Image Viewer [nearest, 3.138×]" or
+// "[nearest, inverted, γ 1.68, fit 0.421×]". The
 // mode is shown because it changes what the pixels mean; three decimals so a
 // near-1 wheel zoom can't be mistaken for exactly 1:1.
 void ImageViewer::updateWindowTitle() {
@@ -505,6 +536,8 @@ void ImageViewer::updateWindowTitle() {
   QString info = nearest ? "nearest" : "bicubic";
   if (m_label->isInverted())
     info += ", inverted";
+  if (m_label->gammaStep() != 0)
+    info += QString(", γ %1").arg(m_label->gamma(), 0, 'f', 2);
   if (!m_label->originalSize().isEmpty()) {
     info += QString(", %1%2×")
                 .arg(m_label->isFitToWindow() ? "fit " : "")
@@ -515,6 +548,10 @@ void ImageViewer::updateWindowTitle() {
 
 void ImageViewer::toggleInverted() {
   m_label->setInverted(!m_label->isInverted());
+}
+
+void ImageViewer::stepGamma(int delta) {
+  m_label->setGammaStep(m_label->gammaStep() + delta);
 }
 
 void ImageViewer::toggleFullScreen() {
@@ -558,6 +595,15 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
     return true;
   case Qt::Key_N:
     toggleInverted();
+    return true;
+  case Qt::Key_Period: // darker, more contrast among bright values
+    stepGamma(1);
+    return true;
+  case Qt::Key_Comma: // brighter, more contrast among dark values
+    stepGamma(-1);
+    return true;
+  case Qt::Key_Slash: // reset gamma (inversion is left as it is)
+    m_label->setGammaStep(0);
     return true;
   case Qt::Key_R: {
     // Actual size, centred on the pointer if it's over the image.

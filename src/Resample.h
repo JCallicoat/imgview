@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QImage>
+#include <array>
 #include <QPointF>
 #include <QSize>
 
@@ -28,8 +29,16 @@ QImage resampleNearest(const QImage &src, const QSize &outSize,
 QImage resampleBicubic(const QImage &src, const QSize &outSize,
                        const QPointF &origin, double step);
 
-// Invert the colour channels in place (v -> 255 - v for opaque pixels),
-// leaving alpha unchanged. For translucent pixels the inversion is done on
-// the un-premultiplied colour, i.e. premultiplied c -> alpha - c.
+// Per-channel tone mapping table: output = lut[input] for each of R, G, B.
+using ToneLut = std::array<quint8, 256>;
+
+// Build the display tone table: optional inversion (v -> 255 - v), then a
+// gamma curve out = 255 * (in / 255)^gamma. gamma > 1 darkens midtones and
+// stretches contrast among bright values; gamma < 1 the opposite. Black and
+// white map to themselves (or each other when inverted), so nothing clips.
+ToneLut buildToneLut(bool invert, double gamma);
+
+// Apply `lut` to the colour channels in place, leaving alpha unchanged.
+// Translucent pixels are un-premultiplied, mapped and re-premultiplied.
 // `img` must be Format_ARGB32_Premultiplied.
-void invertColors(QImage &img);
+void applyLut(QImage &img, const ToneLut &lut);
