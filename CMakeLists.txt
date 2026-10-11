@@ -44,3 +44,11 @@ configure_file(data/imgview.desktop.in
                ${CMAKE_CURRENT_BINARY_DIR}/imgview.desktop @ONLY)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/imgview.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+
+# `cmake --build build --target uninstall` removes everything the last
+# `cmake --install build` installed (listed in install_manifest.txt).
+configure_file(cmake/cmake_uninstall.cmake.in
+               ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake @ONLY)
+add_custom_target(uninstall
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake
+    COMMENT "Uninstalling imgview")

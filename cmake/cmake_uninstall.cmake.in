@@ -1,0 +1,43 @@
+# Removes every file listed in install_manifest.txt, which `cmake --install`
+# writes to the build directory. Run via: cmake --build build --target uninstall
+# (with sudo if the install prefix needs it). Honours DESTDIR like install.
+
+set(manifest "@CMAKE_BINARY_DIR@/install_manifest.txt")
+if(NOT EXISTS "${manifest}")
+  message(FATAL_ERROR
+    "Cannot find ${manifest}. Nothing has been installed from this build "
+    "directory, or it was cleaned; remove the installed files by hand.")
+endif()
+
+file(STRINGS "${manifest}" files)
+set(failed "")
+foreach(file IN LISTS files)
+  set(path "$ENV{DESTDIR}${file}")
+  if(IS_SYMLINK "${path}" OR EXISTS "${path}")
+    message(STATUS "Removing: ${path}")
+    file(REMOVE "${path}")
+    if(IS_SYMLINK "${path}" OR EXISTS "${path}")
+      list(APPEND failed "${path}")
+    endif()
+  else()
+    message(STATUS "Already gone: ${path}")
+  endif()
+endforeach()
+
+if(failed)
+  list(JOIN failed "\n  " failed_list)
+  message(FATAL_ERROR
+    "Could not remove (missing permissions? try sudo):\n  ${failed_list}")
+endif()
+
+# Refresh the "Open With" cache so imgview disappears from it. Skipped for
+# DESTDIR (staged/package) installs, and harmless if the tool is missing.
+set(apps_dir "@CMAKE_INSTALL_FULL_DATADIR@/applications")
+find_program(UPDATE_DESKTOP_DATABASE update-desktop-database)
+if(UPDATE_DESKTOP_DATABASE AND NOT DEFINED ENV{DESTDIR} AND IS_DIRECTORY "${apps_dir}")
+  execute_process(COMMAND "${UPDATE_DESKTOP_DATABASE}" "${apps_dir}"
+                  RESULT_VARIABLE rc OUTPUT_QUIET ERROR_QUIET)
+  if(rc EQUAL 0)
+    message(STATUS "Updated desktop database in ${apps_dir}")
+  endif()
+endif()
