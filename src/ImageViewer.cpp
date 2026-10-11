@@ -60,6 +60,31 @@ void ScaledImageLabel::setInterpolation(Interpolation mode) {
   emit viewChanged();
 }
 
+void ScaledImageLabel::setInverted(bool inverted) {
+  if (inverted == m_inverted)
+    return;
+  m_inverted = inverted;
+  m_invertedCache = QImage();
+  update();
+  emit viewChanged();
+}
+
+// Returns `rendered`, or an inverted copy of it when inversion is on.
+const QImage &ScaledImageLabel::forDisplay(const QImage &rendered) {
+  if (!m_inverted)
+    return rendered;
+  if (m_invertedCache.isNull() ||
+      m_invertedSourceKey != rendered.cacheKey()) {
+    // convertToFormat() is a no-op for the formats used here, and
+    // invertColors() then detaches, so `rendered` itself is untouched.
+    m_invertedCache =
+        rendered.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    invertColors(m_invertedCache);
+    m_invertedSourceKey = rendered.cacheKey();
+  }
+  return m_invertedCache;
+}
+
 void ScaledImageLabel::markInteracting() {
   m_interacting = true;
   m_refineTimer.start(); // restarts if already running
@@ -178,7 +203,7 @@ void ScaledImageLabel::paintEvent(QPaintEvent *event) {
                                         Qt::SmoothTransformation);
       m_scaledCache.setDevicePixelRatio(dpr);
     }
-    painter.drawImage(m_offset, m_scaledCache);
+    painter.drawImage(m_offset, forDisplay(m_scaledCache));
   } else {
     // Zoomed in: resample only the visible part of the original, at
     // device-pixel resolution. Memory use doesn't grow with zoom.
@@ -212,6 +237,11 @@ void ScaledImageLabel::paintEvent(QPaintEvent *event) {
       const QRectF source((visible.topLeft() - m_offset) / scale,
                           visible.size() / scale);
       painter.drawImage(visible, m_original, source);
+      if (m_inverted) {
+        // Preview only: invert on screen (white "difference" = 255 - v).
+        painter.setCompositionMode(QPainter::CompositionMode_Difference);
+        painter.fillRect(visible, Qt::white);
+      }
       return;
     }
 
@@ -228,7 +258,7 @@ void ScaledImageLabel::paintEvent(QPaintEvent *event) {
       m_viewportCacheStep = step;
       m_lastRenderMs = timer.elapsed();
     }
-    painter.drawImage(pos, m_viewportCache);
+    painter.drawImage(pos, forDisplay(m_viewportCache));
   }
 }
 
@@ -466,19 +496,25 @@ void ImageViewer::toggleInterpolation() {
   updateWindowTitle();
 }
 
-// e.g. "Image Viewer [nearest, 3.138×]" or "[nearest, fit 0.421×]". The
+// e.g. "Image Viewer [nearest, 3.138×]" or "[nearest, inverted, fit 0.421×]". The
 // mode is shown because it changes what the pixels mean; three decimals so a
 // near-1 wheel zoom can't be mistaken for exactly 1:1.
 void ImageViewer::updateWindowTitle() {
   const bool nearest =
       m_label->interpolation() == ScaledImageLabel::Interpolation::Nearest;
   QString info = nearest ? "nearest" : "bicubic";
+  if (m_label->isInverted())
+    info += ", inverted";
   if (!m_label->originalSize().isEmpty()) {
     info += QString(", %1%2×")
                 .arg(m_label->isFitToWindow() ? "fit " : "")
                 .arg(m_label->currentScale(), 0, 'f', 3);
   }
   setWindowTitle(QString("Image Viewer [%1]").arg(info));
+}
+
+void ImageViewer::toggleInverted() {
+  m_label->setInverted(!m_label->isInverted());
 }
 
 void ImageViewer::toggleFullScreen() {
@@ -519,6 +555,9 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
     return true;
   case Qt::Key_F:
     toggleFullScreen();
+    return true;
+  case Qt::Key_N:
+    toggleInverted();
     return true;
   case Qt::Key_R: {
     // Actual size, centred on the pointer if it's over the image.

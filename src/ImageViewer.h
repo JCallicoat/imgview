@@ -28,6 +28,7 @@ private:
   void toggleInfoPanel();
   void toggleInterpolation();
   void toggleFullScreen();
+  void toggleInverted();
   void updateWindowTitle();
 
   QString m_imagePath;
@@ -68,6 +69,10 @@ public:
   Interpolation interpolation() const { return m_interpolation; }
   void setInterpolation(Interpolation mode);
 
+  // Show the image with inverted colours (applied after resampling).
+  bool isInverted() const { return m_inverted; }
+  void setInverted(bool inverted);
+
 signals:
   // Scale, fit state or interpolation mode may have changed.
   void viewChanged();
@@ -91,6 +96,7 @@ private:
   void updateCursor();
   void markInteracting();
   void panBy(const QPointF &delta);
+  const QImage &forDisplay(const QImage &rendered);
 
   // Kept as an ARGB32_Premultiplied QImage so the bicubic resampler can read
   // its pixels directly.
@@ -119,6 +125,13 @@ private:
   // took longer than a frame), draw a fast preview with QPainter and do the
   // full render once the view has been still for a moment.
   Interpolation m_interpolation = Interpolation::Nearest;
+
+  // Colour inversion is applied to the resampled image just before drawing.
+  // m_invertedCache holds the inverted copy of the render whose cacheKey()
+  // is m_invertedSourceKey, so it's redone only when the render changes.
+  bool m_inverted = false;
+  QImage m_invertedCache;
+  qint64 m_invertedSourceKey = 0;
   QTimer m_refineTimer;
   bool m_interacting = false;
   qint64 m_lastRenderMs = 0;

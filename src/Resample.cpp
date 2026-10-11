@@ -179,3 +179,24 @@ QImage resampleBicubic(const QImage &src, const QSize &outSize,
   });
   return out;
 }
+
+void invertColors(QImage &img) {
+  if (img.isNull())
+    return;
+  Q_ASSERT(img.format() == QImage::Format_ARGB32_Premultiplied);
+  uchar *const bits = img.bits(); // see resampleNearest()
+  const qsizetype bpl = img.bytesPerLine();
+  const int w = img.width();
+  parallelRows(img.height(), [&](int b, int e) {
+    for (int y = b; y < e; ++y) {
+      QRgb *line = reinterpret_cast<QRgb *>(bits + y * bpl);
+      for (int x = 0; x < w; ++x) {
+        const QRgb p = line[x];
+        const uint a = p >> 24;
+        // Premultiplied channels are <= alpha, so alpha - c stays valid.
+        line[x] = (a << 24) | ((a - ((p >> 16) & 0xff)) << 16) |
+                  ((a - ((p >> 8) & 0xff)) << 8) | (a - (p & 0xff));
+      }
+    }
+  });
+}

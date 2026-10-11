@@ -27,3 +27,9 @@ QImage resampleNearest(const QImage &src, const QSize &outSize,
 // exactly on a source pixel center get exactly that pixel's value.
 QImage resampleBicubic(const QImage &src, const QSize &outSize,
                        const QPointF &origin, double step);
+
+// Invert the colour channels in place (v -> 255 - v for opaque pixels),
+// leaving alpha unchanged. For translucent pixels the inversion is done on
+// the un-premultiplied colour, i.e. premultiplied c -> alpha - c.
+// `img` must be Format_ARGB32_Premultiplied.
+void invertColors(QImage &img);
