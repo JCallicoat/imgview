@@ -19,6 +19,7 @@ It was built for examining images such as Mars rover frames for artifacts like c
 
 ```bash
 imgview path/to/image.jpg
+iv path/to/image.jpg        # short alias, installed alongside imgview
 ```
 
 Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt image plugins) can be opened.
@@ -122,9 +123,10 @@ This produces `build/imgview`. A Release build is recommended because resampling
 cmake --install build
 ```
 
-This installs two files, under `/usr/local` by default:
+This installs three files, under `/usr/local` by default:
 
 - `bin/imgview` – the program.
+- `bin/iv` – a short alias: a symlink to `imgview` in the same directory.
 - `share/applications/imgview.desktop` – a desktop entry, so file managers offer imgview under **Open With** for image files. It lists every image type handled by Qt's own image plugins (Qt GUI's built-in formats, Qt Image Formats and Qt SVG), whether or not those plugins are installed on your system: BMP, GIF, JPEG, PNG, PBM/PGM/PPM, XBM, XPM, ICO, SVG/SVGZ, ICNS, JPEG 2000 (JP2/JPX/JPM), TGA, TIFF, WBMP and WebP. Opening a type whose plugin is missing shows a "Failed to load image" message.
 
 The entry is hidden from application menus (`NoDisplay=true`) because imgview needs a file to open; it still appears in **Open With**. Its `Exec` line uses the full install path, so it works for prefixes that aren't on your `PATH`.
@@ -148,7 +150,7 @@ From the repository root, using the same build directory you installed from:
 cmake --build build --target uninstall
 ```
 
-This removes exactly the files the last `cmake --install build` put in place (CMake lists them in `build/install_manifest.txt`) and refreshes the **Open With** cache. Use `sudo` if the install did, e.g. for the default `/usr/local` prefix. If the build directory is gone, delete `bin/imgview` and `share/applications/imgview.desktop` under the install prefix by hand.
+This removes exactly the files the last `cmake --install build` put in place (CMake lists them in `build/install_manifest.txt`) and refreshes the **Open With** cache. Use `sudo` if the install did, e.g. for the default `/usr/local` prefix. If the build directory is gone, delete `bin/imgview`, `bin/iv` and `share/applications/imgview.desktop` under the install prefix by hand.
 
 ### Editor support (clangd)
 

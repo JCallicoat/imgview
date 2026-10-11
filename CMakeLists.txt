@@ -37,6 +37,15 @@ set_target_properties(imgview PROPERTIES
 include(GNUInstallDirs)
 install(TARGETS imgview RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
+# Short alias: `iv` -> `imgview`, a relative symlink next to the binary.
+# It's made in the build directory and installed like a normal file, so it
+# lands in install_manifest.txt and the uninstall target removes it too.
+if(UNIX)
+  file(CREATE_LINK imgview ${CMAKE_CURRENT_BINARY_DIR}/iv SYMBOLIC)
+  install(FILES ${CMAKE_CURRENT_BINARY_DIR}/iv
+          DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+
 # Desktop entry, so file managers offer imgview under "Open With". Exec uses
 # the full install path so it works for prefixes that aren't on PATH.
 set(IMGVIEW_INSTALL_BINARY "${CMAKE_INSTALL_FULL_BINDIR}/imgview")
