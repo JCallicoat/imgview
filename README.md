@@ -142,17 +142,6 @@ update-desktop-database ~/.local/share/applications   # refresh Open With lists
 
 Most desktops pick up new entries automatically; if imgview doesn't appear in **Open With**, run `update-desktop-database` on the `applications` directory as shown above.
 
-### Arch Linux
-
-The `arch/` directory has a `PKGBUILD` for an `imgview-git` package, which builds the latest commit and installs to the system directories (`/usr/bin`, `/usr/share/applications`):
-
-```bash
-cd arch
-makepkg -si
-```
-
-Remove it again with `sudo pacman -R imgview-git`. `qt6-imageformats` (TIFF, WebP, …) and `qt6-svg` are optional dependencies for the extra formats. After changing the `PKGBUILD`, regenerate `.SRCINFO` with `makepkg --printsrcinfo > .SRCINFO`.
-
 ### Uninstall
 
 From the repository root, using the same build directory you installed from:
@@ -162,6 +151,47 @@ cmake --build build --target uninstall
 ```
 
 This removes exactly the files the last `cmake --install build` put in place (CMake lists them in `build/install_manifest.txt`) and refreshes the **Open With** cache. Use `sudo` if the install did, e.g. for the default `/usr/local` prefix. If the build directory is gone, delete `bin/imgview`, `bin/iv` and `share/applications/imgview.desktop` under the install prefix by hand.
+
+
+### Arch Linux
+
+The `arch/` directory has two AUR-style packages. Both install to the system directories (`/usr/bin`, `/usr/share/applications`, `/usr/share/licenses`) and conflict with each other, so install one or the other:
+
+| Directory | Package | Builds |
+|---|---|---|
+| `arch/` | `imgview` | the latest release tag (e.g. `v1.0.0`) |
+| `arch/imgview-git/` | `imgview-git` | the latest commit on `main` |
+
+```bash
+cd arch                 # or: cd arch/imgview-git
+makepkg -si
+```
+
+Remove it again with `sudo pacman -R imgview` (or `imgview-git`). `qt6-imageformats` (TIFF, WebP, …) and `qt6-svg` are optional dependencies for the extra formats.
+
+**Version churn in `imgview-git`:** makepkg writes the version it computes from git (e.g. `1.0.0.r2.gc0ffee1`) back into `arch/imgview-git/PKGBUILD`. Don't commit that change here; the version moves with every commit, so it never settles. Discard it with `git restore arch/imgview-git/PKGBUILD`, or build from a copy (`cp -r arch/imgview-git /tmp/ && cd /tmp/imgview-git && makepkg -si`). The release package has no such churn: its version only changes when you release.
+
+#### Releasing a new version
+
+1. Tag and push the release: `git tag -a v1.1.0 -m "imgview 1.1.0" && git push origin v1.1.0`.
+2. In `arch/PKGBUILD`, set `pkgver=1.1.0` and reset `pkgrel=1`.
+3. In `arch/`, run `updpkgsums` (from `pacman-contrib`) to download the new tarball and update `sha256sums`.
+4. Regenerate the metadata: `makepkg --printsrcinfo > .SRCINFO`.
+5. Commit `arch/PKGBUILD` and `arch/.SRCINFO`. This commit comes after the tag, since the checksum needs the tag's tarball; that's normal.
+
+For packaging-only fixes (dependencies, build steps) without a new release, bump `pkgrel` instead of `pkgver`.
+
+#### Publishing to the AUR
+
+Each AUR package lives in its own git repo, separate from this one. For the release package:
+
+```bash
+git clone ssh://aur@aur.archlinux.org/imgview.git ~/aur/imgview      # once
+cp arch/PKGBUILD arch/.SRCINFO ~/aur/imgview/
+cd ~/aur/imgview && git add PKGBUILD .SRCINFO && git commit -m "Update to 1.1.0" && git push
+```
+
+For `imgview-git`, use `~/aur/imgview-git` and `arch/imgview-git/PKGBUILD`, then run `makepkg -o` (fetch and update the version, no build) and `makepkg --printsrcinfo > .SRCINFO` there before committing. Only push it when the PKGBUILD itself changes; users building it always get the latest commit anyway.
 
 ### Editor support (clangd)
 
@@ -184,7 +214,8 @@ src/ImageViewer.h/.cpp          Main window (info panel, keys, title, status bar
 src/Resample.h/.cpp             Nearest and bicubic resamplers, tone (invert/gamma) tables
 data/imgview.desktop.in         Desktop entry template (installed as imgview.desktop)
 cmake/cmake_uninstall.cmake.in  Script behind the uninstall target
-arch/PKGBUILD, arch/.SRCINFO    Arch Linux (AUR-style) package for imgview-git
+arch/PKGBUILD, arch/.SRCINFO    Arch Linux package for the latest release (imgview)
+arch/imgview-git/               Arch Linux package for the latest commit (imgview-git)
 CMakeLists.txt                  Build configuration
 LICENSE                         MIT license
 .clangd                         Points clangd at build/compile_commands.json

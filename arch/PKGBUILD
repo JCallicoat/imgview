@@ -1,37 +1,24 @@
 # Maintainer: Jordan Callicoat <jordan dot callicoat at gmail dot com>
 
-pkgname=imgview-git
-_pkgname=imgview
-pkgver=r13.4fd1da4
+pkgname=imgview
+pkgver=1.0.0
 pkgrel=1
 pkgdesc='Image viewer for close inspection of pixels and EXIF metadata (Qt 6)'
 arch=('x86_64' 'aarch64')
 url='https://github.com/JCallicoat/imgview'
 license=('MIT')
 depends=('qt6-base' 'exiv2' 'gcc-libs' 'glibc')
-makedepends=('cmake' 'git')
+makedepends=('cmake')
 optdepends=('qt6-imageformats: TIFF, WebP, TGA, ICNS, WBMP and JPEG 2000 support'
             'qt6-svg: SVG support')
-provides=("$_pkgname")
-conflicts=("$_pkgname")
-source=("$_pkgname::git+$url.git")
-sha256sums=('SKIP')
-
-pkgver() {
-  cd "$_pkgname"
-  # Tags (vX.Y.Z) if any exist, otherwise r<commit count>.<short hash>.
-  ( set -o pipefail
-    git describe --long --tags --abbrev=7 2>/dev/null |
-      sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' ||
-    printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
-  )
-}
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('6ec6d60a2ce31a3fd4ee82a8f6b99315e5a7d0c23ea5acdc02fcec662df6395e')
 
 build() {
   # CMAKE_BUILD_TYPE=None so makepkg's CFLAGS/CXXFLAGS/LDFLAGS are used as-is.
   # qt_standard_project_setup() adds an $ORIGIN-relative RPATH meant for
   # relocatable installs; a /usr system package doesn't need it.
-  cmake -B build -S "$_pkgname" \
+  cmake -B build -S "$pkgname-$pkgver" \
     -DCMAKE_BUILD_TYPE='None' \
     -DCMAKE_INSTALL_PREFIX='/usr' \
     -DCMAKE_SKIP_INSTALL_RPATH=ON \
@@ -44,5 +31,5 @@ package() {
   # /usr/share/applications/imgview.desktop.
   DESTDIR="$pkgdir" cmake --install build
   # MIT requires shipping the license text.
-  install -Dm644 "$_pkgname/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$pkgname-$pkgver/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

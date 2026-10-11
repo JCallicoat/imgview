@@ -1,6 +1,7 @@
-# makepkg build leftovers
+# makepkg build leftovers (both packages)
 src/
 pkg/
 imgview/
+imgview-*.tar.gz
 *.pkg.tar.*
 *.log
