@@ -8,15 +8,25 @@
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QMessageBox>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QResizeEvent>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <QWidget>
 
+#include <cmath>
+
 #include <exiv2/exiv2.hpp>
 
 //-------------------- ScaledImageLabel --------------------
+
+namespace {
+constexpr double kMinZoom = 0.1;
+constexpr double kMaxZoom = 10.0;
+constexpr double kZoomStep = 1.1;
+} // namespace
 
 ScaledImageLabel::ScaledImageLabel(QWidget *parent) : QLabel(parent) {
   setAlignment(Qt::AlignCenter);
@@ -26,41 +36,150 @@ ScaledImageLabel::ScaledImageLabel(QWidget *parent) : QLabel(parent) {
 
 void ScaledImageLabel::setPixmap(const QPixmap &pixmap) {
   m_original = pixmap;
-  m_zoomFactor = 1.0;
-  m_manualZoom = false;
-  updateScaledPixmap();
+  resetView();
 }
 
 void ScaledImageLabel::setPixmap(const QImage &image) {
   m_original = QPixmap::fromImage(image);
+  resetView();
+}
+
+void ScaledImageLabel::resetView() {
   m_zoomFactor = 1.0;
   m_manualZoom = false;
-  updateScaledPixmap();
+  m_dragging = false;
+  m_scaledCache = QPixmap();
+  clampOffset();
+  updateCursor();
+  update();
+}
+
+double ScaledImageLabel::fitScale() const {
+  if (m_original.isNull() || width() <= 0 || height() <= 0)
+    return 1.0;
+  return qMin(double(width()) / m_original.width(),
+              double(height()) / m_original.height());
+}
+
+double ScaledImageLabel::currentScale() const {
+  return m_manualZoom ? m_zoomFactor : fitScale();
+}
+
+QSizeF ScaledImageLabel::scaledSize() const {
+  return QSizeF(m_original.size()) * currentScale();
+}
+
+bool ScaledImageLabel::canPan() const {
+  if (m_original.isNull())
+    return false;
+  const QSizeF s = scaledSize();
+  return s.width() > width() || s.height() > height();
+}
+
+// Keep the viewport inside the image: center along any axis where the image
+// is smaller than the widget, otherwise don't allow scrolling past an edge.
+void ScaledImageLabel::clampOffset() {
+  if (m_original.isNull())
+    return;
+  const QSizeF s = scaledSize();
+  const double w = width(), h = height();
+
+  if (s.width() <= w)
+    m_offset.setX((w - s.width()) / 2.0);
+  else
+    m_offset.setX(qBound(w - s.width(), m_offset.x(), 0.0));
+
+  if (s.height() <= h)
+    m_offset.setY((h - s.height()) / 2.0);
+  else
+    m_offset.setY(qBound(h - s.height(), m_offset.y(), 0.0));
+}
+
+// Zoom so the image point under `anchor` (widget coordinates) stays under it.
+void ScaledImageLabel::zoomAt(double newScale, const QPointF &anchor) {
+  if (m_original.isNull())
+    return;
+
+  const double oldScale = currentScale();
+  // Always allow zooming out at least as far as fit-to-window.
+  newScale = qBound(qMin(kMinZoom, fitScale()), newScale, kMaxZoom);
+
+  const QPointF imagePoint = (anchor - m_offset) / oldScale;
+  m_zoomFactor = newScale;
+  m_manualZoom = true;
+  m_offset = anchor - imagePoint * newScale;
+
+  clampOffset();
+  updateCursor();
+  update();
+}
+
+void ScaledImageLabel::updateCursor() {
+  if (m_dragging)
+    setCursor(Qt::ClosedHandCursor);
+  else if (canPan())
+    setCursor(Qt::OpenHandCursor);
+  else
+    unsetCursor();
+}
+
+void ScaledImageLabel::paintEvent(QPaintEvent *event) {
+  if (m_original.isNull()) {
+    QLabel::paintEvent(event); // e.g. the "Failed to load" text
+    return;
+  }
+
+  QPainter painter(this);
+  const double scale = currentScale();
+  const qreal dpr = devicePixelRatioF();
+
+  if (scale * dpr <= 1.0) {
+    // Zoomed out: cache a smoothly downscaled copy (never larger than the
+    // original). QPixmap::scaled() filters better than the painter's
+    // bilinear sampling when shrinking a lot.
+    const QSize px = (QSizeF(m_original.size()) * scale * dpr).toSize();
+    if (m_scaledCache.isNull() || m_scaledCache.size() != px) {
+      m_scaledCache = m_original.scaled(px, Qt::IgnoreAspectRatio,
+                                        Qt::SmoothTransformation);
+      m_scaledCache.setDevicePixelRatio(dpr);
+    }
+    painter.drawPixmap(m_offset, m_scaledCache);
+  } else {
+    // Zoomed in: draw only the visible part of the original, scaled up by
+    // the painter. Memory use no longer grows with the zoom level.
+    m_scaledCache = QPixmap();
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    const QRectF target(m_offset, scaledSize());
+    const QRectF visible = target.intersected(QRectF(rect()));
+    if (visible.isEmpty())
+      return;
+    const QRectF source((visible.topLeft() - m_offset) / scale,
+                        visible.size() / scale);
+    painter.drawPixmap(visible, m_original, source);
+  }
 }
 
 void ScaledImageLabel::resizeEvent(QResizeEvent *event) {
   QLabel::resizeEvent(event);
-  updateScaledPixmap();
+  // Keep the same part of the image at the center of the view.
+  if (event->oldSize().isValid()) {
+    const QSizeF d = QSizeF(event->size() - event->oldSize()) / 2.0;
+    m_offset += QPointF(d.width(), d.height());
+  }
+  clampOffset();
+  updateCursor();
 }
 
 void ScaledImageLabel::wheelEvent(QWheelEvent *event) {
-  if (m_original.isNull()) {
+  const int dy = event->angleDelta().y();
+  if (m_original.isNull() || dy == 0) {
     QLabel::wheelEvent(event);
     return;
   }
-
-  if (!m_manualZoom) {
-    // Capture the current fit-to-window scale as the starting zoom factor
-    double wRatio = double(width()) / m_original.width();
-    double hRatio = double(height()) / m_original.height();
-    m_zoomFactor = qMin(wRatio, hRatio);
-    m_manualZoom = true;
-  }
-
-  double factor = (event->angleDelta().y() > 0) ? 1.1 : 0.9;
-  m_zoomFactor *= factor;
-  m_zoomFactor = qBound(0.1, m_zoomFactor, 10.0);
-  updateScaledPixmap();
+  // 120 units = one notch; fractional deltas from smooth wheels/touchpads
+  // give proportionally smaller steps.
+  const double factor = std::pow(kZoomStep, dy / 120.0);
+  zoomAt(currentScale() * factor, event->position());
   event->accept();
 }
 
@@ -69,27 +188,14 @@ void ScaledImageLabel::keyPressEvent(QKeyEvent *event) {
   case Qt::Key_Plus:
   case Qt::Key_Equal:
   case Qt::Key_Minus: {
-    if (!m_manualZoom) {
-      double wRatio = double(width()) / m_original.width();
-      double hRatio = double(height()) / m_original.height();
-      m_zoomFactor = qMin(wRatio, hRatio);
-      m_manualZoom = true;
-    }
-
-    if (event->key() == Qt::Key_Minus)
-      m_zoomFactor /= 1.1;
-    else
-      m_zoomFactor *= 1.1;
-
-    m_zoomFactor = qBound(0.1, m_zoomFactor, 10.0);
-    updateScaledPixmap();
+    const double factor =
+        (event->key() == Qt::Key_Minus) ? 1.0 / kZoomStep : kZoomStep;
+    zoomAt(currentScale() * factor, QRectF(rect()).center());
     event->accept();
     break;
   }
   case Qt::Key_0:
-    m_manualZoom = false;
-    m_zoomFactor = 1.0;
-    updateScaledPixmap();
+    resetView();
     event->accept();
     break;
   default:
@@ -98,25 +204,38 @@ void ScaledImageLabel::keyPressEvent(QKeyEvent *event) {
   }
 }
 
-void ScaledImageLabel::updateScaledPixmap() {
-  if (m_original.isNull() || size().isEmpty())
+void ScaledImageLabel::mousePressEvent(QMouseEvent *event) {
+  if (event->button() == Qt::LeftButton && canPan()) {
+    m_dragging = true;
+    m_lastMousePos = event->position();
+    updateCursor();
+    event->accept();
     return;
-
-  QSize target;
-  if (m_manualZoom) {
-    int w = static_cast<int>(m_original.width() * m_zoomFactor);
-    int h = static_cast<int>(m_original.height() * m_zoomFactor);
-    target = QSize(w, h);
-  } else {
-    double wRatio = double(width()) / m_original.width();
-    double hRatio = double(height()) / m_original.height();
-    double scale = qMin(wRatio, hRatio);
-    int w = int(m_original.width() * scale);
-    int h = int(m_original.height() * scale);
-    target = QSize(w, h);
   }
-  QLabel::setPixmap(
-      m_original.scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+  QLabel::mousePressEvent(event);
+}
+
+void ScaledImageLabel::mouseMoveEvent(QMouseEvent *event) {
+  if (m_dragging) {
+    const QPointF pos = event->position();
+    m_offset += pos - m_lastMousePos;
+    m_lastMousePos = pos;
+    clampOffset();
+    update();
+    event->accept();
+    return;
+  }
+  QLabel::mouseMoveEvent(event);
+}
+
+void ScaledImageLabel::mouseReleaseEvent(QMouseEvent *event) {
+  if (event->button() == Qt::LeftButton && m_dragging) {
+    m_dragging = false;
+    updateCursor();
+    event->accept();
+    return;
+  }
+  QLabel::mouseReleaseEvent(event);
 }
 
 //-------------------- ImageViewer --------------------
@@ -153,9 +272,9 @@ void ImageViewer::createInfoPanel() {
   layout->addWidget(new QLabel(QString("<b>File size:</b> %1").arg(sizeStr)));
 
   // Dimensions
-  if (!m_label->pixmap().isNull()) {
-    int w = m_label->pixmap().width();
-    int h = m_label->pixmap().height();
+  if (!m_label->originalSize().isEmpty()) {
+    int w = m_label->originalSize().width();
+    int h = m_label->originalSize().height();
     layout->addWidget(
         new QLabel(QString("<b>Dimensions:</b> %1 × %2 px").arg(w).arg(h)));
   }
