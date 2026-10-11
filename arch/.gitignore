@@ -1,0 +1,6 @@
+# makepkg build leftovers
+src/
+pkg/
+imgview/
+*.pkg.tar.*
+*.log

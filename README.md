@@ -142,6 +142,17 @@ update-desktop-database ~/.local/share/applications   # refresh Open With lists
 
 Most desktops pick up new entries automatically; if imgview doesn't appear in **Open With**, run `update-desktop-database` on the `applications` directory as shown above.
 
+### Arch Linux
+
+The `arch/` directory has a `PKGBUILD` for an `imgview-git` package, which builds the latest commit and installs to the system directories (`/usr/bin`, `/usr/share/applications`):
+
+```bash
+cd arch
+makepkg -si
+```
+
+Remove it again with `sudo pacman -R imgview-git`. `qt6-imageformats` (TIFF, WebP, …) and `qt6-svg` are optional dependencies for the extra formats. After changing the `PKGBUILD`, regenerate `.SRCINFO` with `makepkg --printsrcinfo > .SRCINFO`.
+
 ### Uninstall
 
 From the repository root, using the same build directory you installed from:
@@ -173,6 +184,12 @@ src/ImageViewer.h/.cpp          Main window (info panel, keys, title, status bar
 src/Resample.h/.cpp             Nearest and bicubic resamplers, tone (invert/gamma) tables
 data/imgview.desktop.in         Desktop entry template (installed as imgview.desktop)
 cmake/cmake_uninstall.cmake.in  Script behind the uninstall target
+arch/PKGBUILD, arch/.SRCINFO    Arch Linux (AUR-style) package for imgview-git
 CMakeLists.txt                  Build configuration
+LICENSE                         MIT license
 .clangd                         Points clangd at build/compile_commands.json
 ```
+
+## License
+
+MIT; see [LICENSE](LICENSE).

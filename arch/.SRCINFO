@@ -1,0 +1,22 @@
+pkgbase = imgview-git
+	pkgdesc = Image viewer for close inspection of pixels and EXIF metadata (Qt 6)
+	pkgver = r13.4fd1da4
+	pkgrel = 1
+	url = https://github.com/JCallicoat/imgview
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	makedepends = cmake
+	makedepends = git
+	depends = qt6-base
+	depends = exiv2
+	depends = gcc-libs
+	depends = glibc
+	optdepends = qt6-imageformats: TIFF, WebP, TGA, ICNS, WBMP and JPEG 2000 support
+	optdepends = qt6-svg: SVG support
+	provides = imgview
+	conflicts = imgview
+	source = imgview::git+https://github.com/JCallicoat/imgview.git
+	sha256sums = SKIP
+
+pkgname = imgview-git
