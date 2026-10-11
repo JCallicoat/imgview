@@ -1,0 +1,20 @@
+# Build directories
+build/
+
+# CMake cache and binaries
+CMakeCache.txt
+CMakeFiles/
+makefile
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Compiled object files
+*.o
+*.obj
+*.so
+*.dll
+*.dylib
+
+# Info panel resources
