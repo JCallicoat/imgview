@@ -286,9 +286,11 @@ void ImageViewer::createInfoPanel() {
   table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
   table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
   table->verticalHeader()->setVisible(false);
+
   table->setWordWrap(true);
   table->setTextElideMode(Qt::ElideNone);
   table->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
   table->setSelectionBehavior(QTableWidget::SelectItems);
   table->setSelectionMode(QTableWidget::ExtendedSelection);
   table->setEditTriggers(QTableWidget::AllEditTriggers);

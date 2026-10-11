@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 project(imgview LANGUAGES CXX)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Find Qt6 modules
 find_package(Qt6 COMPONENTS Core Gui Widgets REQUIRED)
 qt_standard_project_setup()
