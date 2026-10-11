@@ -5,11 +5,13 @@
 #include <QApplication>
 #include <QCursor>
 #include <QDebug>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QImageReader>
 #include <QKeyEvent>
 #include <QLocale>
 #include <QMessageBox>
@@ -22,6 +24,7 @@
 #include <QWheelEvent>
 #include <QWidget>
 
+#include <algorithm>
 #include <cmath>
 
 #include <exiv2/exiv2.hpp>
@@ -117,8 +120,16 @@ void ScaledImageLabel::setPixmap(const QPixmap &pixmap) {
 }
 
 void ScaledImageLabel::setPixmap(const QImage &image) {
+  QLabel::setText(QString()); // drop any earlier "Failed to load" message
   m_original = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
   m_viewportCache = QImage();
+  resetView();
+}
+
+void ScaledImageLabel::clearImage() {
+  m_original = QImage();
+  m_viewportCache = QImage();
+  m_adjustedCache = QImage();
   resetView();
 }
 
@@ -355,9 +366,10 @@ void ScaledImageLabel::panBy(const QPointF &delta) {
 }
 
 // Arrow keys pan while this view has focus and the image is larger than the
-// view. They move the view like scrollbars do (Right shows more of the right
-// side): 10% of the view per press, or exactly one image pixel with Shift
-// for stepping across fine detail. Other keys go up to the window.
+// view along that axis. They move the view like scrollbars do (Right shows
+// more of the right side): 10% of the view per press, or exactly one image
+// pixel with Shift for stepping across fine detail. An arrow with nothing to
+// pan goes up to the window, where Left/Right switch images.
 void ScaledImageLabel::keyPressEvent(QKeyEvent *event) {
   int dx = 0, dy = 0;
   switch (event->key()) {
@@ -369,7 +381,9 @@ void ScaledImageLabel::keyPressEvent(QKeyEvent *event) {
     QLabel::keyPressEvent(event);
     return;
   }
-  if (!canPan()) {
+  const QSizeF s = m_original.isNull() ? QSizeF() : scaledSize();
+  const bool canPanAxis = dx != 0 ? s.width() > width() : s.height() > height();
+  if (!canPanAxis) {
     QLabel::keyPressEvent(event);
     return;
   }
@@ -404,6 +418,43 @@ void ScaledImageLabel::mouseReleaseEvent(QMouseEvent *event) {
 //-------------------- ImageViewer --------------------
 
 namespace {
+// Natural, locale-independent filename order: runs of digits compare by
+// numeric value ("frame2" < "frame10"), everything else case-insensitively.
+// (QCollator's numeric mode is silently ignored under the C locale.)
+bool naturalLess(const QString &a, const QString &b) {
+  qsizetype i = 0, j = 0;
+  while (i < a.size() && j < b.size()) {
+    if (a[i].isDigit() && b[j].isDigit()) {
+      qsizetype i2 = i, j2 = j;
+      while (i2 < a.size() && a[i2].isDigit()) ++i2;
+      while (j2 < b.size() && b[j2].isDigit()) ++j2;
+      // Compare the digit runs as numbers: ignore leading zeros, then the
+      // longer run is larger, then compare digit by digit.
+      qsizetype ia = i, jb = j;
+      while (ia < i2 - 1 && a[ia] == u'0') ++ia;
+      while (jb < j2 - 1 && b[jb] == u'0') ++jb;
+      if (i2 - ia != j2 - jb)
+        return i2 - ia < j2 - jb;
+      for (; ia < i2; ++ia, ++jb)
+        if (a[ia] != b[jb])
+          return a[ia] < b[jb];
+      if (i2 - i != j2 - j) // same value: fewer leading zeros first
+        return i2 - i < j2 - j;
+      i = i2;
+      j = j2;
+    } else {
+      const QChar ca = a[i].toCaseFolded(), cb = b[j].toCaseFolded();
+      if (ca != cb)
+        return ca < cb;
+      ++i;
+      ++j;
+    }
+  }
+  if (a.size() - i != b.size() - j)
+    return a.size() - i < b.size() - j; // shorter remainder first
+  return a < b; // differ only by case: keep a stable, total order
+}
+
 // "184.9 KiB (189345 bytes)"; plain "N bytes" below 1 KiB.
 QString formatFileSize(qint64 bytes) {
   if (bytes <= 0)
@@ -418,20 +469,36 @@ QString formatFileSize(qint64 bytes) {
 } // namespace
 
 ImageViewer::ImageViewer(const QString &imagePath, QWidget *parent)
-    : QMainWindow(parent), m_imagePath(imagePath) {
+    : QMainWindow(parent) {
   resize(800, 600);
 
   // Key hints. Keys are space-separated (',' and '-' are keys themselves).
   // A minimum width of 1 lets the window shrink below the text width; the
   // text is then clipped, with the full list still in the tooltip.
   const QString hints = QStringLiteral(
-      "zoom: - + 0 r  |  pan: ← ↑ → ↓ (shift: 1 px)  |  interp: i  |  "
+      "zoom: - + 0 r  |  pan: ← ↑ → ↓ (shift: 1 px)  |  prev/next image: ← →  |  "
+      "interp: i  |  "
       "invert: n  |  gamma: , . /  |  info: m  |  fullscreen: f  |  quit: q");
   QLabel *hintLabel = new QLabel(hints, this);
   hintLabel->setMinimumWidth(1);
   hintLabel->setContentsMargins(6, 0, 0, 0);
   hintLabel->setToolTip(hints);
+  // Ignored: the hints only get the space the view info label leaves over,
+  // so in fullscreen it's the hints that get clipped, never the view info.
+  hintLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   statusBar()->addWidget(hintLabel, 1);
+
+  // The title's file/view info, on the right of the status bar. A permanent
+  // widget, so transient status messages don't hide it. Shown only in
+  // fullscreen; see changeEvent().
+  m_viewInfoLabel = new QLabel(this);
+  m_viewInfoLabel->setTextFormat(Qt::PlainText);
+  m_viewInfoLabel->setContentsMargins(16, 0, 6, 0);
+  // Never shrink below the text: it's only shown in fullscreen, so it can't
+  // force the normal window wider.
+  m_viewInfoLabel->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Preferred);
+  m_viewInfoLabel->setVisible(false);
+  statusBar()->addPermanentWidget(m_viewInfoLabel);
 
   QWidget *central = new QWidget(this);
   setCentralWidget(central);
@@ -443,12 +510,114 @@ ImageViewer::ImageViewer(const QString &imagePath, QWidget *parent)
   updateWindowTitle();
   mainLayout->addWidget(m_label, 1);
 
-  QPixmap pixmap(imagePath);
-  if (pixmap.isNull()) {
-    m_label->setText(QString("Failed to load image:\n%1").arg(imagePath));
-  } else {
-    m_label->setPixmap(pixmap);
+  openPath(imagePath);
+}
+
+// Every file in the image's folder that Qt has a reader for (by extension,
+// case-insensitively), in natural order so "frame2" sorts before "frame10".
+// Rescanned on each use, so files added or removed meanwhile are picked up.
+QStringList ImageViewer::imageFilesInFolder() const {
+  QStringList filters;
+  for (const QByteArray &fmt : QImageReader::supportedImageFormats())
+    filters << "*." + QString::fromLatin1(fmt);
+  QDir dir(m_folder);
+  QStringList files = dir.entryList(filters, QDir::Files | QDir::Readable);
+  std::sort(files.begin(), files.end(), naturalLess);
+  return files;
+}
+
+// Open an image file, or a folder at its first image (in the same natural
+// order that ←/→ use). An empty folder shows a message; ←/→ then pick up any
+// images added to it later.
+void ImageViewer::openPath(const QString &path) {
+  if (!QFileInfo(path).isDir()) {
+    loadImage(path);
+    return;
   }
+  m_folder = QDir(path).absolutePath();
+  const QStringList files = imageFilesInFolder();
+  if (!files.isEmpty()) {
+    loadImage(QDir(m_folder).filePath(files.first()));
+    return;
+  }
+  m_imagePath.clear();
+  m_folderIndex = -1;
+  m_folderCount = 0;
+  m_label->clearImage();
+  m_label->setText(QString("No images found in folder:\n%1").arg(m_folder));
+  refreshInfoPanel();
+  updateWindowTitle();
+}
+
+void ImageViewer::loadImage(const QString &path) {
+  m_imagePath = QFileInfo(path).absoluteFilePath();
+  m_folder = QFileInfo(m_imagePath).absolutePath();
+  QPixmap pixmap(m_imagePath);
+  if (pixmap.isNull()) {
+    m_label->clearImage();
+    m_label->setText(QString("Failed to load image:\n%1").arg(m_imagePath));
+  } else {
+    m_label->setPixmap(pixmap); // keeps interpolation/invert/gamma settings
+  }
+
+  const QStringList files = imageFilesInFolder();
+  m_folderIndex = files.indexOf(QFileInfo(m_imagePath).fileName());
+  m_folderCount = int(files.size());
+
+  refreshInfoPanel();
+  updateWindowTitle();
+}
+
+void ImageViewer::showAdjacentImage(int delta) {
+  const QStringList files = imageFilesInFolder();
+  if (files.isEmpty())
+    return;
+  const QString name = QFileInfo(m_imagePath).fileName();
+  qsizetype index = files.indexOf(name);
+  if (m_imagePath.isEmpty()) {
+    // Opened an empty folder that has images now: → first, ← last.
+    index = delta > 0 ? -1 : files.size();
+  } else if (index < 0) {
+    // The current file is gone (or isn't a readable type): continue from
+    // where it would sort.
+    const auto it = std::lower_bound(files.begin(), files.end(), name, naturalLess);
+    index = (it - files.begin()) - (delta > 0 ? 1 : 0);
+  }
+  // Wrap around at either end, with a short note so it's clear the folder
+  // has been gone through.
+  const qsizetype n = files.size();
+  qsizetype target = index + delta;
+  QString note;
+  if (target >= n) {
+    target = 0;
+    note = "Wrapped to the first image";
+  } else if (target < 0) {
+    target = n - 1;
+    note = "Wrapped to the last image";
+  }
+  const QString path = QDir(m_folder).filePath(files[target]);
+  if (QFileInfo(path) == QFileInfo(m_imagePath)) {
+    statusBar()->showMessage("Only image in this folder", 2000);
+    return;
+  }
+  loadImage(path);
+  if (!note.isEmpty())
+    statusBar()->showMessage(note, 2000);
+}
+
+// Rebuild the info panel for the current file, if it has been created.
+// A hidden panel is just dropped; it's rebuilt when next shown.
+void ImageViewer::refreshInfoPanel() {
+  if (!m_infoPanel)
+    return;
+  const bool visible = m_infoPanel->isVisible();
+  const bool hadFocus = m_infoPanel->isAncestorOf(QApplication::focusWidget());
+  delete m_infoPanel;
+  m_infoPanel = nullptr;
+  if (visible)
+    createInfoPanel();
+  if (hadFocus)
+    m_label->setFocus();
 }
 
 void ImageViewer::createInfoPanel() {
@@ -494,7 +663,7 @@ void ImageViewer::createInfoPanel() {
   table->setEditTriggers(QTableWidget::AllEditTriggers);
   table->installEventFilter(this);
 
-  try {
+  if (!m_imagePath.isEmpty()) try { // nothing to read for an empty folder
     auto image = Exiv2::ImageFactory::open(m_imagePath.toUtf8().constData());
     if (image) {
       image->readMetadata();
@@ -539,8 +708,8 @@ void ImageViewer::toggleInterpolation() {
   updateWindowTitle();
 }
 
-// e.g. "Image Viewer [nearest, 3.138×]" or
-// "[nearest, inverted, γ 1.68, fit 0.421×]". The
+// e.g. "frame_0012.png (12/48) – Image Viewer [nearest, 3.138×]" or
+// "... [nearest, inverted, γ 1.68, fit 0.421×]". The
 // mode is shown because it changes what the pixels mean; three decimals so a
 // near-1 wheel zoom can't be mistaken for exactly 1:1.
 void ImageViewer::updateWindowTitle() {
@@ -556,7 +725,23 @@ void ImageViewer::updateWindowTitle() {
                 .arg(m_label->isFitToWindow() ? "fit " : "")
                 .arg(m_label->currentScale(), 0, 'f', 3);
   }
-  setWindowTitle(QString("Image Viewer [%1]").arg(info));
+  QString file = m_imagePath.isEmpty() ? QDir(m_folder).dirName() + "/"
+                                       : QFileInfo(m_imagePath).fileName();
+  if (m_folderIndex >= 0)
+    file += QString(" (%1/%2)").arg(m_folderIndex + 1).arg(m_folderCount);
+  setWindowTitle(QString("%1 – Image Viewer [%2]").arg(file, info));
+  // Same info for the status bar, used in fullscreen.
+  if (m_viewInfoLabel)
+    m_viewInfoLabel->setText(QString("%1  [%2]").arg(file, info));
+}
+
+// Show the view info in the status bar only while fullscreen. Reacting to the
+// window state (rather than in toggleFullScreen()) also covers fullscreen
+// changes made by the window manager.
+void ImageViewer::changeEvent(QEvent *event) {
+  QMainWindow::changeEvent(event);
+  if (event->type() == QEvent::WindowStateChange && m_viewInfoLabel)
+    m_viewInfoLabel->setVisible(isFullScreen());
 }
 
 void ImageViewer::toggleInverted() {
@@ -651,7 +836,21 @@ bool ImageViewer::eventFilter(QObject *watched, QEvent *event) {
   return QMainWindow::eventFilter(watched, event);
 }
 
+// Left/Right reach here when nothing used them first: the image view passes
+// them up when the image isn't wider than the window. They're deliberately
+// not in handleShortcutKey(), so they still move between EXIF table cells.
 void ImageViewer::keyPressEvent(QKeyEvent *event) {
-  if (!handleShortcutKey(event))
-    QMainWindow::keyPressEvent(event);
+  if (handleShortcutKey(event))
+    return;
+  if (!(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier))) {
+    if (event->key() == Qt::Key_Left) {
+      showAdjacentImage(-1);
+      return;
+    }
+    if (event->key() == Qt::Key_Right) {
+      showAdjacentImage(1);
+      return;
+    }
+  }
+  QMainWindow::keyPressEvent(event);
 }

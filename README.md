@@ -9,18 +9,22 @@ It was built for examining images such as Mars rover frames for artifacts like c
 - **Zoom and pan** – zoom with the mouse wheel around the pointer, or with the keyboard; drag with the mouse or use the arrow keys to move around a zoomed image.
 - **True-pixel zoom** – when zoomed in, every screen pixel is an unmodified copy of an image pixel (nearest neighbour). A smoother **bicubic** mode is also available.
 - **Single-pixel panning** – step the view by exactly one image pixel to walk across fine detail.
+- **Folder browsing** – step to the previous or next image in the same folder, in natural order (`frame2` before `frame10`), keeping your view settings.
 - **color inversion** – turns a faint light streak on a dark background into a dark streak on a light one.
 - **Gamma adjustment** – step a gamma curve to stretch contrast in the bright or dark end of the image.
 - **Info panel** – file size, dimensions and the full EXIF data table, with selectable values.
-- **Status in the window title** – current resampling mode, tone settings and exact zoom factor.
-- **Key hints** in a status bar at the bottom of the window.
+- **Status in the window title** – file name and position in the folder, resampling mode, tone settings and exact zoom factor.
+- **Key hints** in a status bar at the bottom of the window; in fullscreen it also shows the title's file and view info.
 
 ## Usage
 
 ```bash
 imgview path/to/image.jpg
 iv path/to/image.jpg        # short alias, installed alongside imgview
+imgview path/to/folder      # opens the folder's first image
 ```
+
+Given a folder, imgview opens its first image in the same natural order that `←` / `→` step through (only that folder, not subfolders); `←` / `→` then browse the rest. If the folder has no images, it says so, and `←` / `→` pick up any images added to it later.
 
 Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt image plugins) can be opened.
 
@@ -35,31 +39,36 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | Left-drag | Pan (when the image is larger than the window) |
 | `←` `↑` `→` `↓` | Pan by 10 % of the view (when the image view has focus) |
 | `Shift` + arrows | Pan by exactly one image pixel |
+| `←` / `→` (nothing to pan sideways) | Previous / next image in the folder |
 | `I` | Toggle zoom-in resampling: **nearest** (true pixels, default) ⇄ **bicubic** (smooth) |
 | `N` | Toggle color inversion |
 | `.` | Gamma up: darker, more contrast among bright values |
 | `,` | Gamma down: brighter, more contrast among dark values |
 | `/` | Reset gamma to 1 (inversion is left as it is) |
 | `M` | Show / hide the info panel |
-| `F` | Toggle fullscreen |
+| `F` | Toggle fullscreen (the status bar then shows the title's info) |
 | `Esc` | Leave fullscreen; outside fullscreen, quit |
 | `Q` | Quit |
 
 All keys except the arrow keys work wherever keyboard focus is, including in the info panel (while you are typing in an EXIF cell, keys go into the cell). The arrow keys pan only while the image has focus (click the image to give it focus), so they still move between cells in the EXIF table.
 
+**Previous / next image:** `←` and `→` switch images whenever they have nothing to pan, i.e. when the image isn't wider than the window (at fit-to-window, or a tall image at 1:1). When zoomed in, they pan as usual; press `0` to fit, then `←` / `→` to move on. The folder's list is every file Qt can read, matched by extension (case-insensitively), sorted naturally, and rescanned on every press, so files added or removed meanwhile are picked up. It wraps around: `→` on the last image goes to the first and `←` on the first goes to the last, with a short message in the status bar when that happens. Interpolation mode, inversion and gamma stay as they are; zoom resets to fit; the info panel updates for the new file.
+
 ### Window title
 
-The title shows the current view settings, for example:
+The title shows the file, its position in the folder, and the current view settings, for example:
 
 ```
-Image Viewer [nearest, inverted, γ 1.68, 3.138×]
-Image Viewer [bicubic, fit 0.421×]
+frame_0012.png (12/48) – Image Viewer [nearest, inverted, γ 1.68, 3.138×]
+frame_0013.png (13/48) – Image Viewer [bicubic, fit 0.421×]
 ```
 
 - **nearest / bicubic** – how the image is resampled when zoomed in.
 - **inverted** – shown when color inversion is on.
 - **γ** – shown when gamma isn't 1.
 - **zoom factor** – image pixels to screen pixels, with three decimals so a near-1 zoom such as `0.998×` can't be mistaken for exactly `1.000×`. `fit` means the image is being fitted to the window.
+
+In fullscreen there's no title bar, so the same information appears on the right of the status bar, e.g. `frame_0012.png (12/48)  [nearest, inverted, γ 1.68, 3.138×]`. If space is short, the key hints are cut off rather than this.
 
 ## Viewing true pixels
 

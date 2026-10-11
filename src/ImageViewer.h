@@ -9,6 +9,7 @@
 #include <QPixmap>
 #include <QPointF>
 #include <QString>
+#include <QStringList>
 #include <QTableWidget>
 #include <QTimer>
 
@@ -23,6 +24,7 @@ public:
 protected:
   void keyPressEvent(QKeyEvent *event) override;
   bool eventFilter(QObject *watched, QEvent *event) override;
+  void changeEvent(QEvent *event) override;
 
 private:
   bool handleShortcutKey(QKeyEvent *event);
@@ -34,9 +36,22 @@ private:
   void stepGamma(int delta);
   void updateWindowTitle();
 
-  QString m_imagePath;
+  // Image loading and folder navigation.
+  void openPath(const QString &path); // an image file, or a folder
+  void loadImage(const QString &path);
+  void showAdjacentImage(int delta); // -1 = previous, +1 = next
+  void refreshInfoPanel();
+  QStringList imageFilesInFolder() const;
+
+  QString m_imagePath; // empty when a folder with no images was opened
+  QString m_folder;    // absolute path of the folder being browsed
+  int m_folderIndex = -1; // position of m_imagePath in its folder, 0-based
+  int m_folderCount = 0;
   ScaledImageLabel *m_label = nullptr;
   QWidget *m_infoPanel = nullptr;
+  // Status bar copy of the title's file/view info, shown only in fullscreen
+  // (where there's no title bar).
+  QLabel *m_viewInfoLabel = nullptr;
 };
 
 class ScaledImageLabel : public QLabel {
@@ -55,6 +70,9 @@ public:
   void setPixmap(const QImage &image);
 
   QSize originalSize() const { return m_original.size(); }
+
+  // Drop the current image (e.g. before showing a "Failed to load" text).
+  void clearImage();
 
   // Keyboard zoom, anchored at the center of the view.
   void zoomIn();
