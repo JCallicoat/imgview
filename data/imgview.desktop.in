@@ -1,0 +1,20 @@
+[Desktop Entry]
+Type=Application
+Name=imgview
+GenericName=Image Viewer
+Comment=Inspect image pixels and EXIF metadata
+Keywords=image;picture;viewer;exif;metadata;pixel;
+Exec=@IMGVIEW_INSTALL_BINARY@ %f
+TryExec=@IMGVIEW_INSTALL_BINARY@
+Icon=image-x-generic
+Terminal=false
+# imgview needs a file to open, so it isn't listed as a launcher in menus;
+# it still shows up under "Open With" for the types below.
+NoDisplay=true
+Categories=Graphics;Viewer;Qt;
+StartupWMClass=imgview
+# Image types handled by Qt's own image plugins (Qt GUI built-ins, Qt Image
+# Formats, Qt SVG), whether or not each plugin is installed on this system.
+# Video types the plugins also register (video/mj2, video/x-mng) and the
+# Apple-only HEIF plugin's types are deliberately left out.
+MimeType=image/bmp;image/gif;image/jpeg;image/png;image/x-portable-bitmap;image/x-portable-graymap;image/x-portable-pixmap;image/x-xbitmap;image/x-xpixmap;image/vnd.microsoft.icon;image/svg+xml;image/svg+xml-compressed;image/x-icns;image/jp2;image/jpx;image/jpm;image/x-tga;image/tiff;image/vnd.wap.wbmp;image/webp;

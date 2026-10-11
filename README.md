@@ -114,11 +114,29 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-This produces `build/imgview`. A Release build is recommended because resampling runs noticeably faster with optimizations. To install it (to `/usr/local/bin` by default):
+This produces `build/imgview`. A Release build is recommended because resampling runs noticeably faster with optimizations.
+
+### Install
 
 ```bash
 cmake --install build
 ```
+
+This installs two files, under `/usr/local` by default:
+
+- `bin/imgview` – the program.
+- `share/applications/imgview.desktop` – a desktop entry, so file managers offer imgview under **Open With** for image files. It lists every image type handled by Qt's own image plugins (Qt GUI's built-in formats, Qt Image Formats and Qt SVG), whether or not those plugins are installed on your system: BMP, GIF, JPEG, PNG, PBM/PGM/PPM, XBM, XPM, ICO, SVG/SVGZ, ICNS, JPEG 2000 (JP2/JPX/JPM), TGA, TIFF, WBMP and WebP. Opening a type whose plugin is missing shows a "Failed to load image" message.
+
+The entry is hidden from application menus (`NoDisplay=true`) because imgview needs a file to open; it still appears in **Open With**. Its `Exec` line uses the full install path, so it works for prefixes that aren't on your `PATH`. To install just for your user instead:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+cmake --build build
+cmake --install build
+update-desktop-database ~/.local/share/applications   # refresh Open With lists
+```
+
+Most desktops pick up new entries automatically; if imgview doesn't appear in **Open With**, run `update-desktop-database` on the `applications` directory as shown above.
 
 ### Editor support (clangd)
 
@@ -130,7 +148,7 @@ CMake writes `build/compile_commands.json` (`CMAKE_EXPORT_COMPILE_COMMANDS` is o
 - **Zoomed out, single pixels can disappear.** The area-averaging downscale dilutes an isolated hot pixel, so zoom in (or press `R`) to check individual pixels.
 - **Non-whole zoom factors give uneven blocks in nearest mode.** At, say, 3.3× some image pixels are 3 screen pixels wide and some 4. The values are still exact.
 - **HiDPI:** 1:1 means one image pixel per *logical* screen pixel. With fractional display scaling (e.g. 125 %) image pixels map to uneven numbers of physical pixels.
-- **Wayland:** some compositors (GNOME in particular) take the taskbar icon from a `.desktop` file rather than from the application, and none is installed yet.
+- **Wayland:** some compositors (GNOME in particular) take the window's icon and name from the installed `imgview.desktop`, so a build run from `build/` without installing may show a generic icon there.
 
 ## Project layout
 
@@ -139,6 +157,7 @@ src/main.cpp            Application entry point, Exiv2 init, app icon
 src/ImageViewer.h/.cpp  Main window (info panel, keys, title, status bar)
                         and the zoomable, pannable image view
 src/Resample.h/.cpp     Nearest and bicubic resamplers, tone (invert/gamma) tables
+data/imgview.desktop.in Desktop entry template (installed as imgview.desktop)
 CMakeLists.txt          Build configuration
 .clangd                 Points clangd at build/compile_commands.json
 ```

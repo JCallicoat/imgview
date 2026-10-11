@@ -34,4 +34,13 @@ set_target_properties(imgview PROPERTIES
 )
 
 # Installation (optional)
-install(TARGETS imgview RUNTIME DESTINATION bin)
+include(GNUInstallDirs)
+install(TARGETS imgview RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# Desktop entry, so file managers offer imgview under "Open With". Exec uses
+# the full install path so it works for prefixes that aren't on PATH.
+set(IMGVIEW_INSTALL_BINARY "${CMAKE_INSTALL_FULL_BINDIR}/imgview")
+configure_file(data/imgview.desktop.in
+               ${CMAKE_CURRENT_BINARY_DIR}/imgview.desktop @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/imgview.desktop
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)

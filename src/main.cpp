@@ -11,6 +11,9 @@ int main(int argc, char *argv[]) {
 
   QApplication app(argc, argv);
   app.setWindowIcon(QIcon::fromTheme(QStringLiteral("image-x-generic")));
+  // Matches the installed imgview.desktop, so Wayland compositors can find
+  // the app's icon and name from it.
+  app.setDesktopFileName(QStringLiteral("imgview"));
   if (argc < 2) {
     qWarning("Usage: %s <image_path>", argv[0]);
     return 1;
