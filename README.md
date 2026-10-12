@@ -22,7 +22,11 @@ It was built for examining images such as Mars rover frames for artifacts like c
 imgview path/to/image.jpg
 iv path/to/image.jpg        # short alias, installed alongside imgview
 imgview path/to/folder      # opens the folder's first image
+imgview                     # opens a file picker
+imgview --version           # also --help
 ```
+
+Started without a path (for example from the application menu, or by opening the app on macOS), imgview shows a file picker; press `O` to open another image at any time. On macOS, double-clicking an image or using **Open With** in Finder works too.
 
 Given a folder, imgview opens its first image in the same natural order that `←` / `→` step through (only that folder, not subfolders); `←` / `→` then browse the rest. If the folder has no images, it says so, and `←` / `→` pick up any images added to it later.
 
@@ -46,6 +50,7 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | `,` | Gamma down: brighter, more contrast among dark values |
 | `/` | Reset gamma to 1 (inversion is left as it is) |
 | `M` | Show / hide the info panel |
+| `O` | Open an image with a file picker |
 | `F` | Toggle fullscreen (the status bar then shows the title's info) |
 | `Esc` | Leave fullscreen; outside fullscreen, quit |
 | `Q` | Quit |
@@ -104,6 +109,30 @@ Press `M` to show the panel beside the image:
 
 The file size and dimension values can be selected with the mouse and copied. The EXIF table cells can be edited in place for convenience, but edits are never written back to the file.
 
+## Install a prebuilt package
+
+Each [GitHub release](https://github.com/JCallicoat/imgview/releases) has packages for:
+
+| System | File | Install |
+|---|---|---|
+| Ubuntu 24.04 (amd64, arm64) | `imgview_<version>-1~ubuntu24.04_<arch>.deb` | `sudo apt install ./imgview_*.deb` |
+| Debian 13 (amd64, arm64) | `imgview_<version>-1~debian13_<arch>.deb` | `sudo apt install ./imgview_*.deb` |
+| Fedora, the release current at the time (x86_64, aarch64) | `imgview-<version>-1.fc<NN>.<arch>.rpm` | `sudo dnf install ./imgview-*.rpm` |
+| macOS 12 or later (Apple Silicon and Intel) | `imgview-<version>-macos-universal.dmg` | open it and drag imgview to Applications |
+
+Each package only works on the system it was built for, because it uses that system's own Qt and Exiv2 libraries. The `.deb` and `.rpm` also recommend the extra Qt image-format plugins (TIFF, WebP, SVG, …), which are installed along with them by default. The macOS app bundles Qt, including those plugins. `SHA256SUMS` lists every file's checksum.
+
+**macOS: the app isn't signed with an Apple Developer ID**, so the first time you open it, macOS refuses because it can't verify the developer. To allow it once:
+
+- **macOS 15 (Sequoia) and later:** try to open imgview, dismiss the warning, then go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to the imgview message.
+- **macOS 14 and earlier:** right-click (or Control-click) imgview in Applications, choose **Open**, and confirm.
+
+Or, on any version, remove the download's quarantine flag in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/imgview.app
+```
+
 ## Building
 
 ### Requirements
@@ -111,7 +140,7 @@ The file size and dimension values can be selected with the mouse and copied. Th
 - A C++17 compiler
 - **CMake** 3.24 or newer
 - **Qt 6** (Core, Gui, Widgets), 6.3 or newer
-- **Exiv2** 0.28 or newer, with its CMake package (the code uses the 0.28 API)
+- **Exiv2** 0.27 or newer, with its CMake package (both the 0.27 and 0.28 APIs are supported)
 
 On Linux, Qt's SVG icon plugin (usually packaged as `qt6-svg` or `qt6-qtsvg`) is needed if your icon theme uses SVG icons, which most do. The app takes its icon, `image-x-generic`, from the current icon theme.
 
@@ -132,13 +161,15 @@ This produces `build/imgview`. A Release build is recommended because resampling
 cmake --install build
 ```
 
-This installs three files, under `/usr/local` by default:
+This installs, under `/usr/local` by default:
 
 - `bin/imgview` – the program.
 - `bin/iv` – a short alias: a symlink to `imgview` in the same directory.
+- `share/man/man1/imgview.1.gz` (and `iv.1.gz`) – the man page.
+- `share/licenses/imgview/LICENSE` – the license.
 - `share/applications/imgview.desktop` – a desktop entry, so file managers offer imgview under **Open With** for image files. It lists every image type handled by Qt's own image plugins (Qt GUI's built-in formats, Qt Image Formats and Qt SVG), whether or not those plugins are installed on your system: BMP, GIF, JPEG, PNG, PBM/PGM/PPM, XBM, XPM, ICO, SVG/SVGZ, ICNS, JPEG 2000 (JP2/JPX/JPM), TGA, TIFF, WBMP and WebP. Opening a type whose plugin is missing shows a "Failed to load image" message.
 
-The entry is hidden from application menus (`NoDisplay=true`) because imgview needs a file to open; it still appears in **Open With**. Its `Exec` line uses the full install path, so it works for prefixes that aren't on your `PATH`.
+Started from the application menu, it opens a file picker. Its `Exec` line uses the full install path, so it works for prefixes that aren't on your `PATH`.
 
 To install just for your user instead:
 
@@ -159,7 +190,7 @@ From the repository root, using the same build directory you installed from:
 cmake --build build --target uninstall
 ```
 
-This removes exactly the files the last `cmake --install build` put in place (CMake lists them in `build/install_manifest.txt`) and refreshes the **Open With** cache. Use `sudo` if the install did, e.g. for the default `/usr/local` prefix. If the build directory is gone, delete `bin/imgview`, `bin/iv` and `share/applications/imgview.desktop` under the install prefix by hand.
+This removes exactly the files the last `cmake --install build` put in place (CMake lists them in `build/install_manifest.txt`) and refreshes the **Open With** cache. Use `sudo` if the install did, e.g. for the default `/usr/local` prefix. If the build directory is gone, delete the files listed under Install above by hand.
 
 
 ### Arch Linux
@@ -180,15 +211,7 @@ Remove it again with `sudo pacman -R imgview` (or `imgview-git`). `qt6-imageform
 
 **Version churn in `imgview-git`:** makepkg writes the version it computes from git (e.g. `1.0.0.r2.gc0ffee1`) back into `arch/imgview-git/PKGBUILD`. Don't commit that change here; the version moves with every commit, so it never settles. Discard it with `git restore arch/imgview-git/PKGBUILD`, or build from a copy (`cp -r arch/imgview-git /tmp/ && cd /tmp/imgview-git && makepkg -si`). The release package has no such churn: its version only changes when you release.
 
-#### Releasing a new version
-
-1. Tag and push the release: `git tag -a v1.1.0 -m "imgview 1.1.0" && git push origin v1.1.0`.
-2. In `arch/PKGBUILD`, set `pkgver=1.1.0` and reset `pkgrel=1`.
-3. In `arch/`, run `updpkgsums` (from `pacman-contrib`) to download the new tarball and update `sha256sums`.
-4. Regenerate the metadata: `makepkg --printsrcinfo > .SRCINFO`.
-5. Commit `arch/PKGBUILD` and `arch/.SRCINFO`. This commit comes after the tag, since the checksum needs the tag's tarball; that's normal.
-
-For packaging-only fixes (dependencies, build steps) without a new release, bump `pkgrel` instead of `pkgver`.
+For a new release, the Arch package is updated as part of the steps in [Releasing](#releasing). For packaging-only fixes (dependencies, build steps) without a new release, bump `pkgrel` instead of `pkgver`.
 
 #### Publishing to the AUR
 
@@ -202,9 +225,26 @@ cd ~/aur/imgview && git add PKGBUILD .SRCINFO && git commit -m "Update to 1.1.0"
 
 For `imgview-git`, use `~/aur/imgview-git` and `arch/imgview-git/PKGBUILD`, then run `makepkg -o` (fetch and update the version, no build) and `makepkg --printsrcinfo > .SRCINFO` there before committing. Only push it when the PKGBUILD itself changes; users building it always get the latest commit anyway.
 
+### macOS
+
+Building on macOS needs Qt 6 (e.g. from Qt's online installer or Homebrew) and Exiv2 (Homebrew's `exiv2`, or `packaging/macos/build-exiv2.sh <exiv2-source> <prefix>` for a static build). `cmake --build build` then produces `build/imgview.app`. To make a self-contained `.dmg` from it, as releases do: `packaging/macos/make-dmg.sh build/imgview.app imgview.dmg "$(uname -m)"` (the last argument lists the architectures every bundled binary must contain).
+
 ### Editor support (clangd)
 
 CMake writes `build/compile_commands.json` (`CMAKE_EXPORT_COMPILE_COMMANDS` is on), and the `.clangd` file in the repository root points clangd at it, so Qt and Exiv2 symbols resolve in editors such as Neovim once the project has been configured into `build/`.
+
+## Releasing
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`) when a version tag is pushed:
+
+1. Set the new version in `CMakeLists.txt` (`project(imgview VERSION 1.2.0 …)`) and commit it.
+2. Tag and push: `git tag -a v1.2.0 -m "imgview 1.2.0" && git push origin main v1.2.0`. The tag must match the CMake version, or the workflow stops with an error.
+3. The workflow builds the Ubuntu, Debian, Fedora and macOS packages and publishes a release with them and a `SHA256SUMS` file, marked as the latest release (shown in the repository's Releases sidebar). Nothing is published if any build fails.
+4. Arch package: in `arch/PKGBUILD`, set `pkgver=1.2.0` and reset `pkgrel=1`; in `arch/`, run `updpkgsums` (from `pacman-contrib`) to fetch the new tarball and update `sha256sums`, then `makepkg --printsrcinfo > .SRCINFO`; commit both. This commit comes after the tag, since the checksum needs the tag's tarball; that's normal. Then publish to the AUR as described under [Arch Linux](#arch-linux).
+
+To try the builds without releasing, run the workflow by hand: **Actions → Release → Run workflow**. The packages are then attached to that run instead of a release.
+
+If a build fails after tagging, fix it, then move the tag to the fixed commit (`git tag -fa v1.2.0 -m "imgview 1.2.0" && git push -f origin v1.2.0`) to rebuild; the release's files are replaced in place.
 
 ## Known limitations
 
@@ -212,16 +252,21 @@ CMake writes `build/compile_commands.json` (`CMAKE_EXPORT_COMPILE_COMMANDS` is o
 - **Zoomed out, single pixels can disappear.** The area-averaging downscale dilutes an isolated hot pixel, so zoom in (or press `R`) to check individual pixels.
 - **Non-whole zoom factors give uneven blocks in nearest mode.** At, say, 3.3× some image pixels are 3 screen pixels wide and some 4. The values are still exact.
 - **HiDPI:** 1:1 means one image pixel per *logical* screen pixel. With fractional display scaling (e.g. 125 %) image pixels map to uneven numbers of physical pixels.
+- **macOS app is unsigned** (no Apple Developer ID), so macOS asks for confirmation the first time; see [Install a prebuilt package](#install-a-prebuilt-package).
 - **Wayland:** some compositors (GNOME in particular) take the window's icon and name from the installed `imgview.desktop`, so a build run from `build/` without installing may show a generic icon there.
 
 ## Project layout
 
 ```
-src/main.cpp                    Application entry point, Exiv2 init, app icon
+src/main.cpp                    Entry point: options, file picker, macOS open events
 src/ImageViewer.h/.cpp          Main window (info panel, keys, title, status bar)
                                 and the zoomable, pannable image view
 src/Resample.h/.cpp             Nearest and bicubic resamplers, tone (invert/gamma) tables
 data/imgview.desktop.in         Desktop entry template (installed as imgview.desktop)
+data/imgview.1                  Man page
+packaging/macos/                macOS Info.plist, icon (and its generator), Exiv2
+                                build script and .dmg script
+.github/workflows/release.yml   Release builds (.deb, .rpm, .dmg)
 cmake/cmake_uninstall.cmake.in  Script behind the uninstall target
 arch/PKGBUILD, arch/.SRCINFO    Arch Linux package for the latest release (imgview)
 arch/imgview-git/               Arch Linux package for the latest commit (imgview-git)

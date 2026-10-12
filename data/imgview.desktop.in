@@ -8,9 +8,7 @@ Exec=@IMGVIEW_INSTALL_BINARY@ %f
 TryExec=@IMGVIEW_INSTALL_BINARY@
 Icon=image-x-generic
 Terminal=false
-# imgview needs a file to open, so it isn't listed as a launcher in menus;
-# it still shows up under "Open With" for the types below.
-NoDisplay=true
+# Started from a menu (no file), it opens a file picker.
 Categories=Graphics;Viewer;Qt;
 StartupWMClass=imgview
 # Image types handled by Qt's own image plugins (Qt GUI built-ins, Qt Image

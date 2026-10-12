@@ -18,8 +18,15 @@ class ScaledImageLabel;
 class ImageViewer : public QMainWindow {
   Q_OBJECT
 public:
-  explicit ImageViewer(const QString &imagePath, QWidget *parent = nullptr);
+  // `path` may be an image file, a folder, or empty (start with nothing
+  // open; see showOpenDialog()).
+  explicit ImageViewer(const QString &path = QString(),
+                       QWidget *parent = nullptr);
   ~ImageViewer() override = default;
+
+  void openPath(const QString &path); // an image file, or a folder
+  void showOpenDialog();              // pick an image file to open
+  bool hasOpenedSomething() const { return !m_folder.isEmpty(); }
 
 protected:
   void keyPressEvent(QKeyEvent *event) override;
@@ -37,14 +44,14 @@ private:
   void updateWindowTitle();
 
   // Image loading and folder navigation.
-  void openPath(const QString &path); // an image file, or a folder
   void loadImage(const QString &path);
   void showAdjacentImage(int delta); // -1 = previous, +1 = next
   void refreshInfoPanel();
   QStringList imageFilesInFolder() const;
 
   QString m_imagePath; // empty when a folder with no images was opened
-  QString m_folder;    // absolute path of the folder being browsed
+  QString m_folder;    // absolute path of the folder being browsed; empty
+                       // until something has been opened
   int m_folderIndex = -1; // position of m_imagePath in its folder, 0-based
   int m_folderCount = 0;
   ScaledImageLabel *m_label = nullptr;

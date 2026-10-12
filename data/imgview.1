@@ -1,0 +1,73 @@
+.TH IMGVIEW 1 "" "imgview" "User Commands"
+.SH NAME
+imgview, iv \- image viewer for close inspection of pixels and EXIF metadata
+.SH SYNOPSIS
+.B imgview
+.RI [ options ]
+.RI [ path ]
+.br
+.B iv
+.RI [ options ]
+.RI [ path ]
+.SH DESCRIPTION
+.B imgview
+shows an image scaled to the window. When zoomed in it shows the stored
+pixel values unmodified (nearest neighbour) by default, and it can invert
+colors and adjust gamma to make faint features easier to spot. An info panel
+shows the file size, dimensions and EXIF metadata.
+.PP
+.I path
+may be an image file or a folder; for a folder, its first image is opened.
+The left and right arrow keys then step through the folder's images. Without
+a path, a file picker opens.
+.B iv
+is a short alias for
+.BR imgview .
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Show a summary of options.
+.TP
+.BR \-v ", " \-\-version
+Show the version.
+.SH KEYS
+.TP
+.B + = \-
+Zoom in, zoom out (the mouse wheel zooms around the pointer).
+.TP
+.B 0
+Fit the image to the window.
+.TP
+.B r
+Zoom to exactly 1:1, centred on the pointer.
+.TP
+.B Arrow keys
+Pan a zoomed image (with Shift: by one image pixel). Left and right switch
+to the previous and next image in the folder when there is nothing to pan
+sideways.
+.TP
+.B i
+Toggle zoom-in resampling between nearest (true pixels) and bicubic.
+.TP
+.B n
+Toggle color inversion.
+.TP
+.B . , /
+Gamma up (darker), gamma down (brighter), reset gamma.
+.TP
+.B m
+Show or hide the info panel.
+.TP
+.B o
+Open an image with a file picker.
+.TP
+.B f
+Toggle fullscreen.
+.TP
+.B Esc
+Leave fullscreen; otherwise quit.
+.TP
+.B q
+Quit.
+.SH SEE ALSO
+https://github.com/JCallicoat/imgview

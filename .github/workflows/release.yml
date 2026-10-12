@@ -1,0 +1,222 @@
+# Builds imgview packages and, for a version tag, publishes them as a GitHub
+# Release (marked Latest, so it shows in the repository's Releases sidebar).
+#
+#   Ubuntu 24.04 and Debian 13 .deb, current Fedora .rpm: amd64 and arm64
+#   macOS: one universal (Apple Silicon + Intel) .dmg
+#
+# Release: bump the version in CMakeLists.txt, commit, then
+#   git tag -a v1.2.3 -m "imgview 1.2.3" && git push origin v1.2.3
+#
+# "Run workflow" on the Actions tab builds everything without releasing;
+# the packages are then downloadable from the run's summary page.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Check version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: version
+        name: Read version from CMakeLists.txt
+        run: |
+          version=$(sed -n 's/^project(imgview VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          if [ -z "$version" ]; then
+            echo "::error file=CMakeLists.txt::Could not read the project version"
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error file=CMakeLists.txt::Tag $GITHUB_REF_NAME doesn't match project version $version; expected tag v$version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version: $version"
+
+  linux:
+    name: ${{ matrix.distro.name }} ${{ matrix.arch.name }}
+    needs: version
+    runs-on: ${{ matrix.arch.runner }}
+    container: ${{ matrix.distro.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          - { name: ubuntu24.04, image: 'ubuntu:24.04', format: DEB }
+          - { name: debian13, image: 'debian:13', format: DEB }
+          - { name: fedora, image: 'fedora:latest', format: RPM }
+        arch:
+          - { name: amd64, runner: ubuntu-24.04 }
+          - { name: arm64, runner: ubuntu-24.04-arm }
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install build dependencies (Debian/Ubuntu)
+        if: matrix.distro.format == 'DEB'
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build qt6-base-dev libexiv2-dev \
+            dpkg-dev file ca-certificates
+
+      - name: Install build dependencies (Fedora)
+        if: matrix.distro.format == 'RPM'
+        run: |
+          dnf -y install gcc-c++ cmake ninja-build qt6-qtbase-devel exiv2-devel \
+            rpm-build
+          echo "Fedora $(rpm -E %fedora)"
+
+      - uses: actions/checkout@v7
+
+      - name: Build package
+        run: |
+          if [ "${{ matrix.distro.format }}" = DEB ]; then
+            . /etc/os-release
+            release="1~${ID}${VERSION_ID}"   # e.g. 1~ubuntu24.04
+          else
+            release=1                        # CPack appends e.g. .fc44
+          fi
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DIMGVIEW_PACKAGE_FORMAT=${{ matrix.distro.format }} \
+            -DIMGVIEW_PACKAGE_RELEASE="$release"
+          cmake --build build
+          (cd build && cpack)
+          mkdir dist
+          mv build/*.deb build/*.rpm dist/ 2>/dev/null || true
+          ls -l dist
+
+      - name: Install and run the package
+        run: |
+          if [ "${{ matrix.distro.format }}" = DEB ]; then
+            apt-get install -y ./dist/*.deb
+          else
+            dnf -y install ./dist/*.rpm
+          fi
+          out=$(imgview --version)
+          echo "$out"
+          [ "$out" = "imgview ${{ needs.version.outputs.version }}" ]
+          [ "$(readlink /usr/bin/iv)" = imgview ]
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.distro.name }}-${{ matrix.arch.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  macos:
+    name: macOS universal
+    needs: version
+    runs-on: macos-15
+    env:
+      EXIV2_VERSION: v0.28.9
+      # Qt 6.8 LTS supports macOS 12 and later; its macOS binaries contain
+      # both arm64 and x86_64 (make-dmg.sh verifies every bundled binary).
+      QT_VERSION: '6.8.*'
+      CMAKE_OSX_ARCHITECTURES: arm64;x86_64
+      CMAKE_OSX_DEPLOYMENT_TARGET: '12.0'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: mac
+          target: desktop
+          arch: clang_64
+          modules: qtimageformats
+          cache: true
+
+      - name: Install Ninja
+        run: brew install ninja
+
+      - name: Cache Exiv2
+        id: exiv2-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/exiv2
+          key: exiv2-${{ env.EXIV2_VERSION }}-universal-${{ env.CMAKE_OSX_DEPLOYMENT_TARGET }}-${{ hashFiles('packaging/macos/build-exiv2.sh') }}
+
+      - name: Build Exiv2 (static, universal)
+        if: steps.exiv2-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$EXIV2_VERSION" https://github.com/Exiv2/exiv2.git "$RUNNER_TEMP/exiv2-src"
+          packaging/macos/build-exiv2.sh "$RUNNER_TEMP/exiv2-src" "$RUNNER_TEMP/exiv2"
+
+      - name: Build imgview.app
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR;$RUNNER_TEMP/exiv2"
+          cmake --build build
+
+      - name: Make the .dmg
+        run: |
+          mkdir dist
+          packaging/macos/make-dmg.sh build/imgview.app \
+            "dist/imgview-${{ needs.version.outputs.version }}-macos-universal.dmg"
+
+      - name: Run the bundled app
+        run: |
+          app=build/imgview.app/Contents/MacOS/imgview
+          out=$("$app" --version)
+          echo "arm64: $out"
+          [ "$out" = "imgview ${{ needs.version.outputs.version }}" ]
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            out=$(arch -x86_64 "$app" --version)
+            echo "x86_64 (Rosetta): $out"
+            [ "$out" = "imgview ${{ needs.version.outputs.version }}" ]
+          else
+            echo "::notice::Rosetta isn't available on this runner; skipped running the x86_64 slice"
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-universal
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: [version, linux, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          ls -l
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # Re-run: replace the assets of the existing release, and publish
+            # it if it's still a draft (e.g. made by an earlier version of this
+            # workflow).
+            gh release upload "$TAG" --clobber -- *
+            gh release edit "$TAG" --draft=false --latest
+          else
+            gh release create "$TAG" --latest --verify-tag \
+              --title "imgview ${{ needs.version.outputs.version }}" \
+              --generate-notes -- *
+          fi

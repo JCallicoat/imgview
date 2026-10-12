@@ -7,6 +7,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -18,6 +19,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QResizeEvent>
+#include <QStandardPaths>
 #include <QStatusBar>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
@@ -468,7 +470,7 @@ QString formatFileSize(qint64 bytes) {
 }
 } // namespace
 
-ImageViewer::ImageViewer(const QString &imagePath, QWidget *parent)
+ImageViewer::ImageViewer(const QString &path, QWidget *parent)
     : QMainWindow(parent) {
   resize(800, 600);
 
@@ -478,7 +480,8 @@ ImageViewer::ImageViewer(const QString &imagePath, QWidget *parent)
   const QString hints = QStringLiteral(
       "zoom: - + 0 r  |  pan: ← ↑ → ↓ (shift: 1 px)  |  prev/next image: ← →  |  "
       "interp: i  |  "
-      "invert: n  |  gamma: , . /  |  info: m  |  fullscreen: f  |  quit: q");
+      "invert: n  |  gamma: , . /  |  info: m  |  open: o  |  fullscreen: f  |  "
+      "quit: q");
   QLabel *hintLabel = new QLabel(hints, this);
   hintLabel->setMinimumWidth(1);
   hintLabel->setContentsMargins(6, 0, 0, 0);
@@ -510,7 +513,32 @@ ImageViewer::ImageViewer(const QString &imagePath, QWidget *parent)
   updateWindowTitle();
   mainLayout->addWidget(m_label, 1);
 
-  openPath(imagePath);
+  if (path.isEmpty())
+    m_label->setText("No image open.\nPress O to open an image.");
+  else
+    openPath(path);
+}
+
+// File picker for any format Qt can read. Patterns are listed in both
+// cases, since some platforms' dialogs match them case-sensitively.
+void ImageViewer::showOpenDialog() {
+  QStringList patterns;
+  for (const QByteArray &fmt : QImageReader::supportedImageFormats()) {
+    const QString ext = QString::fromLatin1(fmt);
+    patterns << "*." + ext.toLower() << "*." + ext.toUpper();
+  }
+  patterns.removeDuplicates();
+  QString startDir = m_folder;
+  if (startDir.isEmpty()) {
+    startDir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    if (!QDir(startDir).exists())
+      startDir = QDir::homePath();
+  }
+  const QString file = QFileDialog::getOpenFileName(
+      this, "Open Image", startDir,
+      QString("Images (%1);;All files (*)").arg(patterns.join(' ')));
+  if (!file.isEmpty())
+    openPath(file);
 }
 
 // Every file in the image's folder that Qt has a reader for (by extension,
@@ -569,6 +597,8 @@ void ImageViewer::loadImage(const QString &path) {
 }
 
 void ImageViewer::showAdjacentImage(int delta) {
+  if (m_folder.isEmpty())
+    return; // nothing opened yet
   const QStringList files = imageFilesInFolder();
   if (files.isEmpty())
     return;
@@ -665,7 +695,9 @@ void ImageViewer::createInfoPanel() {
 
   if (!m_imagePath.isEmpty()) try { // nothing to read for an empty folder
     auto image = Exiv2::ImageFactory::open(m_imagePath.toUtf8().constData());
-    if (image) {
+    // .get(): open() returns std::auto_ptr in Exiv2 0.27 (no bool
+    // conversion) and std::unique_ptr in 0.28.
+    if (image.get()) {
       image->readMetadata();
       const auto &exifData = image->exifData();
       if (!exifData.empty()) {
@@ -713,6 +745,12 @@ void ImageViewer::toggleInterpolation() {
 // mode is shown because it changes what the pixels mean; three decimals so a
 // near-1 wheel zoom can't be mistaken for exactly 1:1.
 void ImageViewer::updateWindowTitle() {
+  if (m_folder.isEmpty()) { // nothing opened yet
+    setWindowTitle("Image Viewer");
+    if (m_viewInfoLabel)
+      m_viewInfoLabel->setText("No image open");
+    return;
+  }
   const bool nearest =
       m_label->interpolation() == ScaledImageLabel::Interpolation::Nearest;
   QString info = nearest ? "nearest" : "bicubic";
@@ -784,6 +822,9 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
     return true;
   case Qt::Key_M:
     toggleInfoPanel();
+    return true;
+  case Qt::Key_O:
+    showOpenDialog();
     return true;
   case Qt::Key_I:
     toggleInterpolation();
