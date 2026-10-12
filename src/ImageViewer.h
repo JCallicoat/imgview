@@ -26,6 +26,8 @@ public:
 
   void openPath(const QString &path); // an image file, or a folder
   void showOpenDialog();              // pick an image file to open
+  // Save the visible image area as shown; ask for the location or not.
+  void saveView(bool chooseLocation);
   bool hasOpenedSomething() const { return !m_folder.isEmpty(); }
 
 protected:
@@ -80,6 +82,13 @@ public:
 
   // Drop the current image (e.g. before showing a "Failed to load" text).
   void clearImage();
+
+  // What the image area shows right now, as an image at display resolution:
+  // the visible part of the image with resampling, inversion and gamma
+  // applied, without the surrounding background. Null if nothing is shown.
+  QImage renderVisible();
+  // The part of the original image that is visible, in image pixels.
+  QRectF visibleSourceRect() const;
 
   // Keyboard zoom, anchored at the center of the view.
   void zoomIn();

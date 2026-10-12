@@ -13,6 +13,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QImageReader>
+#include <QImageWriter>
 #include <QKeyEvent>
 #include <QLocale>
 #include <QMessageBox>
@@ -28,6 +29,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 #include <exiv2/exiv2.hpp>
 
@@ -306,6 +308,50 @@ void ScaledImageLabel::paintEvent(QPaintEvent *event) {
   }
 }
 
+QRectF ScaledImageLabel::visibleSourceRect() const {
+  if (m_original.isNull())
+    return {};
+  const QRectF target(m_offset, scaledSize());
+  const QRectF visible = target.intersected(QRectF(rect()));
+  const double scale = currentScale();
+  return QRectF((visible.topLeft() - m_offset) / scale, visible.size() / scale);
+}
+
+QImage ScaledImageLabel::renderVisible() {
+  if (m_original.isNull())
+    return {};
+  // Use the full-quality render, not a quick preview from a recent drag, and
+  // let paintEvent() bring the render caches up to date for the current view.
+  m_refineTimer.stop();
+  m_interacting = false;
+  repaint();
+
+  const double scale = currentScale();
+  const qreal dpr = devicePixelRatioF();
+  QImage shot;
+  if (scale * dpr <= 1.0) {
+    // Zoomed out: the cache holds the whole downscaled image; cut out the
+    // part that is on screen.
+    if (m_scaledCache.isNull())
+      return {};
+    const QImage &full = forDisplay(m_scaledCache);
+    const QRectF target(m_offset, scaledSize());
+    const QRectF visible = target.intersected(QRectF(rect()));
+    const QRect src = QRectF((visible.topLeft() - m_offset) * dpr,
+                             visible.size() * dpr)
+                          .toAlignedRect()
+                          .intersected(full.rect());
+    shot = full.copy(src);
+  } else {
+    // Zoomed in: the cache is exactly the visible area in device pixels.
+    if (m_viewportCache.isNull())
+      return {};
+    shot = forDisplay(m_viewportCache).copy();
+  }
+  shot.setDevicePixelRatio(1.0);
+  return shot;
+}
+
 void ScaledImageLabel::resizeEvent(QResizeEvent *event) {
   QLabel::resizeEvent(event);
   // Keep the same part of the image at the center of the view.
@@ -480,7 +526,8 @@ ImageViewer::ImageViewer(const QString &path, QWidget *parent)
   const QString hints = QStringLiteral(
       "zoom: - + 0 r  |  pan: ← ↑ → ↓ (shift: 1 px)  |  prev/next image: ← →  |  "
       "interp: i  |  "
-      "invert: n  |  gamma: , . /  |  info: m  |  open: o  |  fullscreen: f  |  "
+      "invert: n  |  gamma: , . /  |  info: m  |  open: o  |  "
+      "save view: s (shift: save as)  |  fullscreen: f  |  "
       "quit: q");
   QLabel *hintLabel = new QLabel(hints, this);
   hintLabel->setMinimumWidth(1);
@@ -575,6 +622,110 @@ void ImageViewer::openPath(const QString &path) {
   m_label->setText(QString("No images found in folder:\n%1").arg(m_folder));
   refreshInfoPanel();
   updateWindowTitle();
+}
+
+namespace {
+// True if every pixel is fully opaque (then the file needn't store alpha).
+bool isOpaque(const QImage &img) {
+  if (!img.hasAlphaChannel())
+    return true;
+  for (int y = 0; y < img.height(); ++y) {
+    const QRgb *line = reinterpret_cast<const QRgb *>(img.constScanLine(y));
+    for (int x = 0; x < img.width(); ++x)
+      if (qAlpha(line[x]) != 255)
+        return false;
+  }
+  return true;
+}
+
+// <dir>/<stem>.png, e.g. "frame_0012_view_x3.000_nearest_inv_g1.68.png", or
+// with "-2", "-3", ... appended to the stem if that file already exists.
+QString uniquePath(const QString &dir, const QString &stem) {
+  QString path = QDir(dir).filePath(stem + ".png");
+  for (int n = 2; QFileInfo::exists(path); ++n)
+    path = QDir(dir).filePath(QString("%1-%2.png").arg(stem).arg(n));
+  return path;
+}
+} // namespace
+
+// S saves what the image area shows (resampling, inversion and gamma
+// applied, at display resolution) as a lossless PNG next to the image, or in
+// the Pictures folder if the image's folder isn't writable. Shift+S asks
+// where to save. The PNG's text fields record the source and view settings.
+void ImageViewer::saveView(bool chooseLocation) {
+  const QImage rendered = m_label->renderVisible();
+  if (rendered.isNull()) {
+    statusBar()->showMessage("No image to save", 3000);
+    return;
+  }
+  QImage shot = isOpaque(rendered)
+                    ? rendered.convertToFormat(QImage::Format_RGB32)
+                    : rendered.convertToFormat(QImage::Format_ARGB32);
+
+  // View settings, for the file name and the PNG's text fields.
+  const bool nearest =
+      m_label->interpolation() == ScaledImageLabel::Interpolation::Nearest;
+  const QString zoom = QString::number(m_label->currentScale(), 'f', 3);
+  QString tag = "x" + zoom + (nearest ? "_nearest" : "_bicubic");
+  QString settings =
+      QString("%1, %2x%3").arg(nearest ? "nearest" : "bicubic", zoom,
+                               m_label->isFitToWindow() ? " (fit)" : "");
+  if (m_label->isInverted()) {
+    tag += "_inv";
+    settings += ", inverted";
+  }
+  if (m_label->gammaStep() != 0) {
+    const QString g = QString::number(m_label->gamma(), 'f', 2);
+    tag += "_g" + g;
+    settings += ", gamma " + g;
+  }
+  const QRect region = m_label->visibleSourceRect().toAlignedRect();
+
+  const QFileInfo source(m_imagePath);
+  QString dir = source.absolutePath();
+  if (!QFileInfo(dir).isWritable()) {
+    dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    if (dir.isEmpty() || !QDir().mkpath(dir))
+      dir = QDir::homePath();
+  }
+  QString path = uniquePath(dir, source.completeBaseName() + "_view_" + tag);
+
+  if (chooseLocation) {
+    path = QFileDialog::getSaveFileName(
+        this, "Save View", path,
+        "PNG image (*.png);;TIFF image (*.tif *.tiff);;All files (*)");
+    if (path.isEmpty())
+      return;
+    if (QFileInfo(path).suffix().isEmpty())
+      path += ".png";
+  }
+
+  const QString description = QString("%1; source region x=%2 y=%3 w=%4 h=%5")
+                                  .arg(settings)
+                                  .arg(region.x())
+                                  .arg(region.y())
+                                  .arg(region.width())
+                                  .arg(region.height());
+  shot.setText("Source", m_imagePath);
+  shot.setText("Description", description);
+  shot.setText("Software", "imgview " + QCoreApplication::applicationVersion());
+
+  // Also report on the terminal (stdout / stderr), so saved files show up in
+  // a log when imgview is run from a shell or script. Paths are printed in
+  // the filesystem's encoding, so they can be pasted into other commands.
+  QImageWriter writer(path);
+  if (!writer.write(shot)) {
+    const QString error = writer.errorString();
+    statusBar()->showMessage(QString("Couldn't save %1: %2").arg(path, error),
+                             6000);
+    std::fprintf(stderr, "imgview: couldn't save view to %s: %s\n",
+                 QFile::encodeName(path).constData(), qPrintable(error));
+    return;
+  }
+  statusBar()->showMessage("Saved " + path, 5000);
+  std::fprintf(stdout, "imgview: saved view to %s (%s)\n",
+               QFile::encodeName(path).constData(), qPrintable(description));
+  std::fflush(stdout);
 }
 
 void ImageViewer::loadImage(const QString &path) {
@@ -825,6 +976,9 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
     return true;
   case Qt::Key_O:
     showOpenDialog();
+    return true;
+  case Qt::Key_S: // Shift+S: choose where
+    saveView(event->modifiers() & Qt::ShiftModifier);
     return true;
   case Qt::Key_I:
     toggleInterpolation();

@@ -13,6 +13,7 @@ It was built for examining images such as Mars rover frames for artifacts like c
 - **color inversion** – turns a faint light streak on a dark background into a dark streak on a light one.
 - **Gamma adjustment** – step a gamma curve to stretch contrast in the bright or dark end of the image.
 - **Info panel** – file size, dimensions and the full EXIF data table, with selectable values.
+- **Save the view** – save exactly what's shown, with zoom, inversion and gamma applied, as a lossless PNG.
 - **Status in the window title** – file name and position in the folder, resampling mode, tone settings and exact zoom factor.
 - **Key hints** in a status bar at the bottom of the window; in fullscreen it also shows the title's file and view info.
 
@@ -51,6 +52,8 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | `/` | Reset gamma to 1 (inversion is left as it is) |
 | `M` | Show / hide the info panel |
 | `O` | Open an image with a file picker |
+| `S` | Save the view as shown (PNG, next to the image) |
+| `Shift` + `S` | Save the view, choosing where |
 | `F` | Toggle fullscreen (the status bar then shows the title's info) |
 | `Esc` | Leave fullscreen; outside fullscreen, quit |
 | `Q` | Quit |
@@ -98,6 +101,16 @@ These change only what is displayed, never the file. They are applied after resa
 With inversion off and γ = 1 the image is drawn untouched, so nearest mode still shows the exact stored values.
 
 Gamma only redistributes the 256 levels that are already there. Strong settings make the stretched end look stepped and merge levels at the other end, and they amplify noise along with real features, so a moderate setting often reads best.
+
+## Saving the view
+
+`S` saves what the image area shows right now – the visible part of the image, with the current resampling, inversion and gamma applied – as a lossless PNG. No window background or interface is included, and it's saved at the display's resolution, so at 1:1 in nearest mode the file holds the exact (tone-adjusted) pixel values.
+
+- **Where:** next to the image, named after it and the view settings, e.g. `frame_0012_view_x3.000_nearest_inv_g1.68.png`. An existing file is never overwritten: `-2`, `-3`, … is added instead. If the image's folder isn't writable, the file goes to your Pictures folder. The status bar shows where it was saved, and so does the terminal or log: each save prints a line to standard output, e.g. `imgview: saved view to /data/sol42/frame_0012_view_x3.000_nearest_inv.png (nearest, 3.000x, inverted; source region x=812 y=440 w=300 h=220)`. A failed save is reported on standard error.
+- **Save as:** `Shift` + `S` opens a save dialog instead (PNG by default; TIFF and other formats by file extension).
+- **Provenance:** the PNG's text fields record the source file, the view settings and which part of the source image is visible, e.g. `nearest, 3.000x, inverted, gamma 1.68; source region x=812 y=440 w=300 h=220` (shown by tools such as `exiftool` or `pngcheck -t`).
+
+On a HiDPI display the file has the display's real pixel count: at 1:1 with 200 % display scaling, each image pixel becomes a 2 × 2 block.
 
 ## Info panel
 

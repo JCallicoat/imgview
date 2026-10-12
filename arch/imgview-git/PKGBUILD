@@ -2,7 +2,7 @@
 
 pkgname=imgview-git
 _pkgname=imgview
-pkgver=1.0.0.r0.gab71140
+pkgver=1.0.1.r2.g6dd096e
 pkgrel=1
 pkgdesc='Image viewer for close inspection of pixels and EXIF metadata (Qt 6)'
 arch=('x86_64' 'aarch64')
