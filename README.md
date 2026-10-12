@@ -250,10 +250,17 @@ CMake writes `build/compile_commands.json` (`CMAKE_EXPORT_COMPILE_COMMANDS` is o
 
 Releases are built by GitHub Actions (`.github/workflows/release.yml`) when a version tag is pushed:
 
-1. Set the new version in `CMakeLists.txt` (`project(imgview VERSION 1.2.0 …)`) and commit it.
-2. Tag and push: `git tag -a v1.2.0 -m "imgview 1.2.0" && git push origin main v1.2.0`. The tag must match the CMake version, or the workflow stops with an error.
-3. The workflow builds the Ubuntu, Debian, Fedora and macOS packages and publishes a release with them and a `SHA256SUMS` file, marked as the latest release (shown in the repository's Releases sidebar). Nothing is published if any build fails.
-4. Arch package: in `arch/PKGBUILD`, set `pkgver=1.2.0` and reset `pkgrel=1`; in `arch/`, run `updpkgsums` (from `pacman-contrib`) to fetch the new tarball and update `sha256sums`, then `makepkg --printsrcinfo > .SRCINFO`; commit both. This commit comes after the tag, since the checksum needs the tag's tarball; that's normal. Then publish to the AUR as described under [Arch Linux](#arch-linux).
+1. Cut the release from an up-to-date, clean `main`, with a configured build directory:
+
+   ```bash
+   RELEASE_VERSION=1.2.0 RELEASE_NOTES="Short description" cmake --build build --target release
+   ```
+
+   This sets the version in `CMakeLists.txt`, commits it as "Release 1.2.0: Short description", pushes `main`, then creates the annotated tag `v1.2.0` with the description and pushes it. Before changing anything it checks that the version is X.Y.Z and higher than the current one, that the tag doesn't exist yet (locally or on GitHub), that you're on `main` and up to date with it, and that there are no uncommitted changes. Add `RELEASE_DRY_RUN=1` to only run the checks and show what would happen. Without a build directory: `cmake -DRELEASE_VERSION=1.2.0 -DRELEASE_NOTES="…" -P cmake/release.cmake`.
+
+   (By hand, it's: set the version in `CMakeLists.txt`, commit, push `main`, then `git tag -a v1.2.0 -m "…" && git push origin v1.2.0`. The tag must match the CMake version, or the workflow stops with an error.)
+2. The workflow builds the Ubuntu, Debian, Fedora and macOS packages and publishes a release with them and a `SHA256SUMS` file, marked as the latest release (shown in the repository's Releases sidebar). Nothing is published if any build fails.
+3. Arch package: in `arch/PKGBUILD`, set `pkgver=1.2.0` and reset `pkgrel=1`; in `arch/`, run `updpkgsums` (from `pacman-contrib`) to fetch the new tarball and update `sha256sums`, then `makepkg --printsrcinfo > .SRCINFO`; commit both. This commit comes after the tag, since the checksum needs the tag's tarball; that's normal. Then publish to the AUR as described under [Arch Linux](#arch-linux).
 
 To try the builds without releasing, run the workflow by hand: **Actions → Release → Run workflow**. The packages are then attached to that run instead of a release.
 
@@ -281,6 +288,7 @@ packaging/macos/                macOS Info.plist, icon (and its generator), Exiv
                                 build script and .dmg script
 .github/workflows/release.yml   Release builds (.deb, .rpm, .dmg)
 cmake/cmake_uninstall.cmake.in  Script behind the uninstall target
+cmake/release.cmake             Script behind the release target
 arch/PKGBUILD, arch/.SRCINFO    Arch Linux package for the latest release (imgview)
 arch/imgview-git/               Arch Linux package for the latest commit (imgview-git)
 CMakeLists.txt                  Build configuration

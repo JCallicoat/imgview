@@ -133,6 +133,16 @@ if(NOT APPLE)
   endif()
 endif()
 
+# Cut a release (bump the version, commit, tag, push):
+#   RELEASE_VERSION=1.2.0 RELEASE_NOTES="Short description" \
+#     cmake --build build --target release
+# See cmake/release.cmake for details and a dry-run option.
+add_custom_target(release
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
+            -P ${CMAKE_SOURCE_DIR}/cmake/release.cmake
+    USES_TERMINAL
+    COMMENT "Cutting an imgview release")
+
 # `cmake --build build --target uninstall` removes everything the last
 # `cmake --install build` installed (listed in install_manifest.txt).
 configure_file(cmake/cmake_uninstall.cmake.in
