@@ -25,6 +25,9 @@ public:
   ~ImageViewer() override = default;
 
   void openPath(const QString &path); // an image file, or a folder
+  // Open several paths; ←/→ then step through just these, in the order
+  // given (folders contribute their images). One path: same as openPath().
+  void openPaths(const QStringList &paths);
   void showOpenDialog();              // pick an image file to open
   // Save the visible image area as shown; ask for the location or not.
   void saveView(bool chooseLocation);
@@ -50,12 +53,17 @@ private:
   void showAdjacentImage(int delta); // -1 = previous, +1 = next
   void refreshInfoPanel();
   QStringList imageFilesInFolder() const;
+  static QStringList imageFilesIn(const QString &folder);
+  void showAdjacentInList(int delta);
 
   QString m_imagePath; // empty when a folder with no images was opened
   QString m_folder;    // absolute path of the folder being browsed; empty
                        // until something has been opened
-  int m_folderIndex = -1; // position of m_imagePath in its folder, 0-based
-  int m_folderCount = 0;
+  // Set when several paths were given: ←/→ step through these (absolute
+  // paths) instead of the folder. Empty means folder browsing.
+  QStringList m_list;
+  int m_folderIndex = -1; // position of m_imagePath in its folder or the
+  int m_folderCount = 0;  // list, 0-based, and the number of images there
   ScaledImageLabel *m_label = nullptr;
   QWidget *m_infoPanel = nullptr;
   // Status bar copy of the title's file/view info, shown only in fullscreen

@@ -592,10 +592,14 @@ void ImageViewer::showOpenDialog() {
 // case-insensitively), in natural order so "frame2" sorts before "frame10".
 // Rescanned on each use, so files added or removed meanwhile are picked up.
 QStringList ImageViewer::imageFilesInFolder() const {
+  return imageFilesIn(m_folder);
+}
+
+QStringList ImageViewer::imageFilesIn(const QString &folder) {
   QStringList filters;
   for (const QByteArray &fmt : QImageReader::supportedImageFormats())
     filters << "*." + QString::fromLatin1(fmt);
-  QDir dir(m_folder);
+  QDir dir(folder);
   QStringList files = dir.entryList(filters, QDir::Files | QDir::Readable);
   std::sort(files.begin(), files.end(), naturalLess);
   return files;
@@ -605,6 +609,7 @@ QStringList ImageViewer::imageFilesInFolder() const {
 // order that ←/→ use). An empty folder shows a message; ←/→ then pick up any
 // images added to it later.
 void ImageViewer::openPath(const QString &path) {
+  m_list.clear(); // back to browsing the folder
   if (!QFileInfo(path).isDir()) {
     loadImage(path);
     return;
@@ -622,6 +627,52 @@ void ImageViewer::openPath(const QString &path) {
   m_label->setText(QString("No images found in folder:\n%1").arg(m_folder));
   refreshInfoPanel();
   updateWindowTitle();
+}
+
+// Several paths, e.g. `imgview a.png b.png c.png`, a shell glob, or several
+// files opened together from a file manager: ←/→ then step through exactly
+// these, in the order given, instead of the image's folder. A folder in the
+// list contributes its images (natural order). Paths that don't exist or
+// aren't readable images are skipped with a note on stderr; duplicates are
+// dropped. If only one image is left, it's opened as usual (folder mode).
+void ImageViewer::openPaths(const QStringList &paths) {
+  if (paths.size() <= 1) {
+    if (!paths.isEmpty())
+      openPath(paths.first());
+    return;
+  }
+  QStringList list;
+  int notImages = 0;
+  for (const QString &p : paths) {
+    const QFileInfo fi(p);
+    if (fi.isDir()) {
+      const QString dir = fi.absoluteFilePath();
+      for (const QString &f : imageFilesIn(dir))
+        list << QDir(dir).filePath(f);
+    } else if (!fi.exists()) {
+      std::fprintf(stderr, "imgview: skipping %s: no such file\n",
+                   QFile::encodeName(p).constData());
+    } else if (QImageReader::imageFormat(fi.absoluteFilePath()).isEmpty()) {
+      ++notImages; // e.g. a text file matched by a shell glob
+    } else {
+      list << fi.absoluteFilePath();
+    }
+  }
+  if (notImages > 0)
+    std::fprintf(stderr, "imgview: skipped %d file(s) that aren't readable images\n",
+                 notImages);
+  list.removeDuplicates();
+
+  if (list.size() <= 1) {
+    if (list.isEmpty()) {
+      openPath(paths.first()); // shows why it can't be opened
+    } else {
+      openPath(list.first());
+    }
+    return;
+  }
+  m_list = list;
+  loadImage(m_list.first());
 }
 
 namespace {
@@ -739,15 +790,24 @@ void ImageViewer::loadImage(const QString &path) {
     m_label->setPixmap(pixmap); // keeps interpolation/invert/gamma settings
   }
 
-  const QStringList files = imageFilesInFolder();
-  m_folderIndex = files.indexOf(QFileInfo(m_imagePath).fileName());
-  m_folderCount = int(files.size());
+  if (!m_list.isEmpty()) {
+    m_folderIndex = int(m_list.indexOf(m_imagePath));
+    m_folderCount = int(m_list.size());
+  } else {
+    const QStringList files = imageFilesInFolder();
+    m_folderIndex = int(files.indexOf(QFileInfo(m_imagePath).fileName()));
+    m_folderCount = int(files.size());
+  }
 
   refreshInfoPanel();
   updateWindowTitle();
 }
 
 void ImageViewer::showAdjacentImage(int delta) {
+  if (!m_list.isEmpty()) {
+    showAdjacentInList(delta);
+    return;
+  }
   if (m_folder.isEmpty())
     return; // nothing opened yet
   const QStringList files = imageFilesInFolder();
@@ -784,6 +844,39 @@ void ImageViewer::showAdjacentImage(int delta) {
   loadImage(path);
   if (!note.isEmpty())
     statusBar()->showMessage(note, 2000);
+}
+
+// ←/→ through the list of paths given: wraps around like folder browsing,
+// and skips listed files that have been deleted or moved since.
+void ImageViewer::showAdjacentInList(int delta) {
+  const qsizetype n = m_list.size();
+  qsizetype index = m_list.indexOf(m_imagePath);
+  if (index < 0)
+    index = delta > 0 ? -1 : n;
+  bool wrapped = false;
+  for (qsizetype step = 0; step < n; ++step) {
+    index += delta;
+    if (index >= n || index < 0) {
+      index = index >= n ? 0 : n - 1;
+      wrapped = true;
+    }
+    const QString &path = m_list[index];
+    if (path == m_imagePath) {
+      statusBar()->showMessage(n > 1 ? "No other listed images exist anymore"
+                                     : "Only image in the list",
+                               3000);
+      return;
+    }
+    if (QFileInfo::exists(path)) {
+      loadImage(path);
+      if (wrapped)
+        statusBar()->showMessage(delta > 0 ? "Wrapped to the first image"
+                                           : "Wrapped to the last image",
+                                 2000);
+      return;
+    }
+  }
+  statusBar()->showMessage("None of the listed images exist anymore", 3000);
 }
 
 // Rebuild the info panel for the current file, if it has been created.

@@ -14,11 +14,22 @@ namespace {
 
 // macOS hands files opened from Finder (double-click, Open With, dropping
 // onto the Dock icon) to the application as QFileOpenEvents, not as
-// command-line arguments.
+// command-line arguments. Opening several files at once sends one event per
+// file in quick succession; those are collected and opened together as a
+// list, like several paths on the command line.
 class Application : public QApplication {
 public:
-  using QApplication::QApplication;
-  std::function<void(const QString &)> openFile;
+  Application(int &argc, char **argv) : QApplication(argc, argv) {
+    m_batch.setSingleShot(true);
+    m_batch.setInterval(150);
+    QObject::connect(&m_batch, &QTimer::timeout, this, [this] {
+      const QStringList paths = m_pending;
+      m_pending.clear();
+      if (openFiles)
+        openFiles(paths);
+    });
+  }
+  std::function<void(const QStringList &)> openFiles;
 
 protected:
   bool event(QEvent *event) override {
@@ -27,12 +38,18 @@ protected:
       QString path = openEvent->file();
       if (path.isEmpty())
         path = openEvent->url().toLocalFile();
-      if (!path.isEmpty() && openFile)
-        openFile(path);
+      if (!path.isEmpty()) {
+        m_pending << path;
+        m_batch.start(); // (re)start: wait for the rest of the batch
+      }
       return true;
     }
     return QApplication::event(event);
   }
+
+private:
+  QStringList m_pending;
+  QTimer m_batch;
 };
 
 void setUpParser(QCommandLineParser &parser) {
@@ -41,8 +58,11 @@ void setUpParser(QCommandLineParser &parser) {
   parser.addHelpOption();
   parser.addVersionOption();
   parser.addPositionalArgument(
-      "path", "Image file or folder to open. Without one, a file picker opens.",
-      "[path]");
+      "paths",
+      "Image files or folders to open. With several, the left/right arrow "
+      "keys step through just those, in the order given; with one, through "
+      "its folder. Without any, a file picker opens.",
+      "[path...]");
 }
 
 // --help and --version only print text, so answer them before starting the
@@ -85,8 +105,12 @@ int main(int argc, char *argv[]) {
   parser.process(app);
   const QStringList args = parser.positionalArguments();
 
-  ImageViewer viewer(args.isEmpty() ? QString() : args.first());
-  app.openFile = [&viewer](const QString &path) { viewer.openPath(path); };
+  ImageViewer viewer(args.size() == 1 ? args.first() : QString());
+  if (args.size() > 1)
+    viewer.openPaths(args);
+  app.openFiles = [&viewer](const QStringList &paths) {
+    viewer.openPaths(paths);
+  };
   viewer.show();
 
   if (args.isEmpty()) {

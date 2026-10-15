@@ -23,6 +23,8 @@ It was built for examining images such as Mars rover frames for artifacts like c
 imgview path/to/image.jpg
 iv path/to/image.jpg        # short alias, installed alongside imgview
 imgview path/to/folder      # opens the folder's first image
+imgview a.png b.png c.png   # ←/→ step through just these files
+iv sol_04*/*.png            # ...or whatever a shell glob matches
 imgview                     # opens a file picker
 imgview --version           # also --help
 ```
@@ -30,6 +32,8 @@ imgview --version           # also --help
 Started without a path (for example from the application menu, or by opening the app on macOS), imgview shows a file picker; press `O` to open another image at any time. On macOS, double-clicking an image or using **Open With** in Finder works too.
 
 Given a folder, imgview opens its first image in the same natural order that `←` / `→` step through (only that folder, not subfolders); `←` / `→` then browse the rest. If the folder has no images, it says so, and `←` / `→` pick up any images added to it later.
+
+Given **several** paths, `←` / `→` step through exactly those images, in the order given, instead of a folder. That makes a shell glob or a hand-picked set of frames easy to compare. A folder among them contributes its images; paths that don't exist or aren't readable images are skipped with a note on the terminal, and duplicates are dropped. The same happens when several images are opened together from a file manager (Open With on Linux, Open in Finder on macOS). Opening a single image later (`O`, or from the file manager) switches back to browsing its folder.
 
 Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt image plugins) can be opened.
 
@@ -60,7 +64,7 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 
 All keys except the arrow keys work wherever keyboard focus is, including in the info panel (while you are typing in an EXIF cell, keys go into the cell). The arrow keys pan only while the image has focus (click the image to give it focus), so they still move between cells in the EXIF table.
 
-**Previous / next image:** `←` and `→` switch images whenever they have nothing to pan, i.e. when the image isn't wider than the window (at fit-to-window, or a tall image at 1:1). When zoomed in, they pan as usual; press `0` to fit, then `←` / `→` to move on. The folder's list is every file Qt can read, matched by extension (case-insensitively), sorted naturally, and rescanned on every press, so files added or removed meanwhile are picked up. It wraps around: `→` on the last image goes to the first and `←` on the first goes to the last, with a short message in the status bar when that happens. Interpolation mode, inversion and gamma stay as they are; zoom resets to fit; the info panel updates for the new file.
+**Previous / next image:** `←` and `→` switch images whenever they have nothing to pan, i.e. when the image isn't wider than the window (at fit-to-window, or a tall image at 1:1). When zoomed in, they pan as usual; press `0` to fit, then `←` / `→` to move on. The folder's list is every file Qt can read, matched by extension (case-insensitively), sorted naturally, and rescanned on every press, so files added or removed meanwhile are picked up. (With several paths given, it's that list instead; listed files deleted meanwhile are skipped.) It wraps around: `→` on the last image goes to the first and `←` on the first goes to the last, with a short message in the status bar when that happens. Interpolation mode, inversion and gamma stay as they are; zoom resets to fit; the info panel updates for the new file.
 
 ### Window title
 

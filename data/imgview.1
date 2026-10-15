@@ -4,11 +4,11 @@ imgview, iv \- image viewer for close inspection of pixels and EXIF metadata
 .SH SYNOPSIS
 .B imgview
 .RI [ options ]
-.RI [ path ]
+.RI [ path ...]
 .br
 .B iv
 .RI [ options ]
-.RI [ path ]
+.RI [ path ...]
 .SH DESCRIPTION
 .B imgview
 shows an image scaled to the window. When zoomed in it shows the stored
@@ -18,8 +18,10 @@ shows the file size, dimensions and EXIF metadata.
 .PP
 .I path
 may be an image file or a folder; for a folder, its first image is opened.
-The left and right arrow keys then step through the folder's images. Without
-a path, a file picker opens.
+The left and right arrow keys then step through the folder's images. With
+several paths, they step through just those images, in the order given (a
+folder among them contributes its images; missing and unreadable files are
+skipped). Without a path, a file picker opens.
 .B iv
 is a short alias for
 .BR imgview .

@@ -4,11 +4,12 @@ Name=imgview
 GenericName=Image Viewer
 Comment=Inspect image pixels and EXIF metadata
 Keywords=image;picture;viewer;exif;metadata;pixel;
-Exec=@IMGVIEW_INSTALL_BINARY@ %f
+Exec=@IMGVIEW_INSTALL_BINARY@ %F
 TryExec=@IMGVIEW_INSTALL_BINARY@
 Icon=image-x-generic
 Terminal=false
-# Started from a menu (no file), it opens a file picker.
+# Started from a menu (no file), it opens a file picker. %F: several files
+# opened together are passed at once, and ←/→ then step through just those.
 Categories=Graphics;Viewer;Qt;
 StartupWMClass=imgview
 # Image types handled by Qt's own image plugins (Qt GUI built-ins, Qt Image
