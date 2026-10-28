@@ -4,6 +4,10 @@ A small, fast image viewer for **close inspection of pixels and metadata**, writ
 
 It was built for examining images such as Mars rover frames for artifacts like cosmic-ray hits, so by default it shows the image's stored pixel values as they are when zoomed in, and adds a few display-only tools (color inversion, gamma, saturation) that make faint features easier to spot without changing the file.
 
+![imgview showing a photo of the Moon at 1600 % saturation, with the info panel listing its EXIF and XMP metadata](docs/screenshot.png)
+
+*A NASA photo of the Moon (art002e009057) at 1600 % saturation, which brings out the color differences between mineral regions, with the info panel open. Photo: NASA.*
+
 ## Features
 
 - **Zoom and pan** – zoom with the mouse wheel around the pointer, or with the keyboard; drag with the mouse or use the arrow keys to move around a zoomed image.
@@ -317,6 +321,7 @@ arch/imgview-git/               Arch Linux package for the latest commit (imgvie
 CMakeLists.txt                  Build configuration
 LICENSE                         MIT license
 .clangd                         Points clangd at build/compile_commands.json
+docs/screenshot.png             Screenshot shown at the top of this README
 ```
 
 ## License
