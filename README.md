@@ -7,7 +7,7 @@ It was built for examining images such as Mars rover frames for artifacts like c
 ## Features
 
 - **Zoom and pan** – zoom with the mouse wheel around the pointer, or with the keyboard; drag with the mouse or use the arrow keys to move around a zoomed image.
-- **True-pixel zoom** – when zoomed in, every screen pixel is an unmodified copy of an image pixel (nearest neighbour). A smoother **bicubic** mode is also available.
+- **True-pixel zoom** – when zoomed in, every screen pixel is an unmodified copy of an image pixel (nearest neighbour). Smoother **bicubic** and sharper **Lanczos3** modes are also available.
 - **Single-pixel panning** – step the view by exactly one image pixel to walk across fine detail.
 - **Folder browsing** – step to the previous or next image in the same folder, in natural order (`frame2` before `frame10`), keeping your view settings.
 - **color inversion** – turns a faint light streak on a dark background into a dark streak on a light one.
@@ -50,7 +50,7 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | `←` `↑` `→` `↓` | Pan by 10 % of the view (when the image view has focus) |
 | `Shift` + arrows | Pan by exactly one image pixel |
 | `←` / `→` (whole image fits in the view) | Previous / next image in the folder |
-| `I` | Toggle zoom-in resampling: **nearest** (true pixels, default) ⇄ **bicubic** (smooth) |
+| `I` | Cycle zoom-in resampling: **nearest** (true pixels, default) → **bicubic** (smooth) → **Lanczos3** (smooth, sharper) |
 | `N` | Toggle color inversion |
 | `.` | Gamma up: darker, more contrast among bright values |
 | `,` | Gamma down: brighter, more contrast among dark values |
@@ -85,7 +85,7 @@ frame_0012.png (12/48) – Image Viewer [nearest, inverted, γ 1.68, sat 60%, 3.
 frame_0013.png (13/48) – Image Viewer [bicubic, fit 0.421×]
 ```
 
-- **nearest / bicubic** – how the image is resampled when zoomed in.
+- **nearest / bicubic / lanczos3** – how the image is resampled when zoomed in.
 - **inverted** – shown when color inversion is on.
 - **γ** – shown when gamma isn't 1.
 - **sat** – shown when saturation isn't 100 %.
@@ -95,14 +95,15 @@ In fullscreen there's no title bar, so the same information appears on the right
 
 ## Viewing true pixels
 
-**Zoomed in (above 100 %)** the view is resampled in one of two ways, toggled with `I`:
+**Zoomed in (above 100 %)** the view is resampled in one of three ways; `I` cycles through them:
 
 - **Nearest** (default): each screen pixel shows exactly the image pixel under it. No values are blended or invented, so what you see are the stored pixel values. At whole-number zooms each image pixel is an exact square block.
 - **Bicubic** (Catmull-Rom): smoother and easier on the eye, but it interpolates between pixels and can add a faint halo along hard edges. Not suitable for judging individual pixel values.
+- **Lanczos3** (windowed sinc, three lobes): smooth like bicubic but sharper, keeping more of the fine detail that varies smoothly, such as surface texture in lunar or planetary images. In exchange it rings a little more at hard edges (a faint halo or ripple along, say, a limb against black sky), and it also blends neighbouring pixels, so it hides single-pixel features such as hot pixels. Also not suitable for judging individual pixel values.
 
-**Zoomed out (below 100 %)** the image is shrunk with a smooth, area-averaging filter in both modes.
+**Zoomed out (below 100 %)** the image is shrunk with a smooth, area-averaging filter in all modes.
 
-Only the visible part of the image is resampled, at the display's real pixel resolution, using all CPU cores. Memory use therefore doesn't grow with the zoom level. If a bicubic render is too slow to keep up while dragging (very large windows on slower machines), a quick preview is shown during the drag and the full render appears as soon as the view is still.
+Only the visible part of the image is resampled, at the display's real pixel resolution, using all CPU cores. Memory use therefore doesn't grow with the zoom level. If a bicubic or Lanczos3 render is too slow to keep up while dragging (very large windows on slower machines), a quick preview is shown during the drag and the full render appears as soon as the view is still.
 
 ## Tone adjustments: invert, gamma and saturation
 
@@ -299,7 +300,7 @@ If a build fails after tagging, fix it, then move the tag to the fixed commit (`
 src/main.cpp                    Entry point: options, file picker, macOS open events
 src/ImageViewer.h/.cpp          Main window (info and help panels, keys, title, status bar)
                                 and the zoomable, pannable image view
-src/Resample.h/.cpp             Nearest and bicubic resamplers, tone adjustments (invert/gamma tables, saturation)
+src/Resample.h/.cpp             Nearest, bicubic and Lanczos3 resamplers, tone adjustments (invert/gamma tables, saturation)
 data/imgview.desktop.in         Desktop entry template (installed as imgview.desktop)
 data/imgview.1                  Man page
 packaging/macos/                macOS Info.plist, icon (and its generator), Exiv2

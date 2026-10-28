@@ -8,35 +8,57 @@
 namespace {
 
 // Keys cubic convolution kernel with a = -0.5 (Catmull-Rom spline).
-inline float cubicWeight(float t) {
+float cubicWeight(double t) {
   t = std::fabs(t);
-  if (t < 1.0f)
-    return (1.5f * t - 2.5f) * t * t + 1.0f;
-  if (t < 2.0f)
-    return ((-0.5f * t + 2.5f) * t - 4.0f) * t + 2.0f;
+  if (t < 1.0)
+    return float((1.5 * t - 2.5) * t * t + 1.0);
+  if (t < 2.0)
+    return float(((-0.5 * t + 2.5) * t - 4.0) * t + 2.0);
   return 0.0f;
 }
 
-// The four source indices and weights contributing to one output position.
+double sinc(double x) {
+  if (x == 0.0)
+    return 1.0;
+  constexpr double kPi = 3.14159265358979323846;
+  const double px = kPi * x;
+  return std::sin(px) / px;
+}
+
+// Lanczos kernel with three lobes: sinc(t) * sinc(t / 3) for |t| < 3.
+float lanczos3Weight(double t) {
+  return std::fabs(t) < 3.0 ? float(sinc(t) * sinc(t / 3.0)) : 0.0f;
+}
+
+// The source indices and weights contributing to one output position: 2 *
+// radius of them, for a kernel that is zero from `radius` on.
+constexpr int kMaxTaps = 6;
 struct Taps {
-  int idx[4];
-  float w[4];
+  int idx[kMaxTaps];
+  float w[kMaxTaps];
 };
 
 // Precompute taps for every output column (or row). Indices past the image
-// edge are clamped, which extends the border pixels outward.
-std::vector<Taps> makeTaps(int count, double origin, double step,
-                           int srcLen) {
+// edge are clamped, which extends the border pixels outward. The weights are
+// normalized to sum to 1 (Lanczos weights don't quite), so flat areas stay
+// exactly flat.
+std::vector<Taps> makeTaps(int count, double origin, double step, int srcLen,
+                           int radius, float (*kernel)(double)) {
+  const int n = 2 * radius;
   std::vector<Taps> taps(count);
   for (int i = 0; i < count; ++i) {
     const double u = origin + (i + 0.5) * step - 0.5;
     const double base = std::floor(u);
-    const float f = float(u - base);
-    for (int k = 0; k < 4; ++k) {
-      const int idx = int(base) - 1 + k;
-      taps[i].idx[k] = std::clamp(idx, 0, srcLen - 1);
-      taps[i].w[k] = cubicWeight(f - float(k - 1));
+    const double f = u - base;
+    float sum = 0.0f;
+    for (int k = 0; k < n; ++k) {
+      const int offset = k - (radius - 1); // source index relative to base
+      taps[i].idx[k] = std::clamp(int(base) + offset, 0, srcLen - 1);
+      taps[i].w[k] = kernel(f - offset);
+      sum += taps[i].w[k];
     }
+    for (int k = 0; k < n; ++k)
+      taps[i].w[k] /= sum;
   }
   return taps;
 }
@@ -106,21 +128,30 @@ QImage resampleNearest(const QImage &src, const QSize &outSize,
   return out;
 }
 
-QImage resampleBicubic(const QImage &src, const QSize &outSize,
-                       const QPointF &origin, double step) {
+namespace {
+
+// Separable convolution with `kernel` (zero from `radius` on), shared by the
+// bicubic and Lanczos resamplers.
+QImage resampleSeparable(const QImage &src, const QSize &outSize,
+                         const QPointF &origin, double step, int radius,
+                         float (*kernel)(double)) {
   if (src.isNull() || outSize.isEmpty())
     return {};
   Q_ASSERT(src.format() == QImage::Format_ARGB32_Premultiplied);
+  Q_ASSERT(2 * radius <= kMaxTaps);
 
+  const int n = 2 * radius;
   const int outW = outSize.width(), outH = outSize.height();
-  const std::vector<Taps> xt = makeTaps(outW, origin.x(), step, src.width());
-  const std::vector<Taps> yt = makeTaps(outH, origin.y(), step, src.height());
+  const std::vector<Taps> xt =
+      makeTaps(outW, origin.x(), step, src.width(), radius, kernel);
+  const std::vector<Taps> yt =
+      makeTaps(outH, origin.y(), step, src.height(), radius, kernel);
 
   // Only the source rows some output row actually reads.
   int rowMin = src.height(), rowMax = -1;
   for (const Taps &t : yt) {
     rowMin = std::min(rowMin, t.idx[0]);
-    rowMax = std::max(rowMax, t.idx[3]);
+    rowMax = std::max(rowMax, t.idx[n - 1]);
   }
   const int rows = rowMax - rowMin + 1;
 
@@ -135,7 +166,7 @@ QImage resampleBicubic(const QImage &src, const QSize &outSize,
       for (int x = 0; x < outW; ++x) {
         const Taps &t = xt[x];
         float c0 = 0, c1 = 0, c2 = 0, c3 = 0;
-        for (int k = 0; k < 4; ++k) {
+        for (int k = 0; k < n; ++k) {
           const QRgb p = line[t.idx[k]];
           const float w = t.w[k];
           c0 += w * float(p & 0xff);
@@ -149,7 +180,7 @@ QImage resampleBicubic(const QImage &src, const QSize &outSize,
     }
   });
 
-  // Pass 2: vertical filter into the output. Cubic weights go negative, so
+  // Pass 2: vertical filter into the output. The weights go negative, so
   // results can overshoot; clamp to [0, 255] and keep colour <= alpha so the
   // premultiplied data stays valid.
   QImage out(outSize, QImage::Format_ARGB32_Premultiplied);
@@ -158,16 +189,16 @@ QImage resampleBicubic(const QImage &src, const QSize &outSize,
   parallelRows(outH, [&](int b, int e) {
     for (int y = b; y < e; ++y) {
       const Taps &t = yt[y];
-      const float *r[4];
-      for (int k = 0; k < 4; ++k)
+      const float *r[kMaxTaps];
+      for (int k = 0; k < n; ++k)
         r[k] = tmp.data() + size_t(t.idx[k] - rowMin) * outW * 4;
       QRgb *line = reinterpret_cast<QRgb *>(bits + y * bpl);
       for (int x = 0; x < outW; ++x) {
         const size_t o = size_t(x) * 4;
-        float c[4];
-        for (int ch = 0; ch < 4; ++ch)
-          c[ch] = t.w[0] * r[0][o + ch] + t.w[1] * r[1][o + ch] +
-                  t.w[2] * r[2][o + ch] + t.w[3] * r[3][o + ch];
+        float c[4] = {0, 0, 0, 0};
+        for (int k = 0; k < n; ++k)
+          for (int ch = 0; ch < 4; ++ch)
+            c[ch] += t.w[k] * r[k][o + ch];
         const int a = std::clamp(int(c[3] + 0.5f), 0, 255);
         const int bl = std::clamp(int(c[0] + 0.5f), 0, a);
         const int g = std::clamp(int(c[1] + 0.5f), 0, a);
@@ -178,6 +209,18 @@ QImage resampleBicubic(const QImage &src, const QSize &outSize,
     }
   });
   return out;
+}
+
+} // namespace
+
+QImage resampleBicubic(const QImage &src, const QSize &outSize,
+                       const QPointF &origin, double step) {
+  return resampleSeparable(src, outSize, origin, step, 2, cubicWeight);
+}
+
+QImage resampleLanczos3(const QImage &src, const QSize &outSize,
+                        const QPointF &origin, double step) {
+  return resampleSeparable(src, outSize, origin, step, 3, lanczos3Weight);
 }
 
 ToneLut buildToneLut(bool invert, double gamma) {

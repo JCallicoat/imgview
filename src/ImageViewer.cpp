@@ -43,7 +43,7 @@ constexpr double kMaxZoom = 10.0;
 constexpr double kZoomStep = 1.1;
 // Renders slower than this use a quick QPainter preview while interacting.
 constexpr qint64 kInteractiveBudgetMs = 16;
-// How long the view must be still before the bicubic render.
+// How long the view must be still before the full (e.g. bicubic) render.
 constexpr int kRefineDelayMs = 120;
 } // namespace
 
@@ -58,6 +58,18 @@ ScaledImageLabel::ScaledImageLabel(QWidget *parent) : QLabel(parent) {
     m_interacting = false;
     update();
   });
+}
+
+QString ScaledImageLabel::interpolationName(Interpolation mode) {
+  switch (mode) {
+  case Interpolation::Nearest:
+    return "nearest";
+  case Interpolation::Bicubic:
+    return "bicubic";
+  case Interpolation::Lanczos3:
+    return "lanczos3";
+  }
+  return {};
 }
 
 void ScaledImageLabel::setInterpolation(Interpolation mode) {
@@ -284,8 +296,9 @@ void ScaledImageLabel::paintEvent(QPaintEvent *event) {
     if (!cacheValid && m_interacting &&
         m_lastRenderMs > kInteractiveBudgetMs) {
       // Quick preview; m_refineTimer repaints with the full render shortly.
-      // Only smooth it in bicubic mode, so nearest never shows blending.
-      const bool smooth = m_interpolation == Interpolation::Bicubic;
+      // Only smooth it in the interpolating modes, so nearest never shows
+      // blending.
+      const bool smooth = m_interpolation != Interpolation::Nearest;
       const QRectF source((visible.topLeft() - m_offset) / scale,
                           visible.size() / scale);
       if (m_toneIsIdentity) {
@@ -310,10 +323,17 @@ void ScaledImageLabel::paintEvent(QPaintEvent *event) {
     if (!cacheValid) {
       QElapsedTimer timer;
       timer.start();
-      m_viewportCache =
-          m_interpolation == Interpolation::Nearest
-              ? resampleNearest(m_original, outSize, origin, step)
-              : resampleBicubic(m_original, outSize, origin, step);
+      switch (m_interpolation) {
+      case Interpolation::Nearest:
+        m_viewportCache = resampleNearest(m_original, outSize, origin, step);
+        break;
+      case Interpolation::Bicubic:
+        m_viewportCache = resampleBicubic(m_original, outSize, origin, step);
+        break;
+      case Interpolation::Lanczos3:
+        m_viewportCache = resampleLanczos3(m_original, outSize, origin, step);
+        break;
+      }
       m_viewportCache.setDevicePixelRatio(dpr);
       m_viewportCachePos = pos;
       m_viewportCacheOrigin = origin;
@@ -732,13 +752,12 @@ void ImageViewer::saveView(bool chooseLocation) {
                     : rendered.convertToFormat(QImage::Format_ARGB32);
 
   // View settings, for the file name and the PNG's text fields.
-  const bool nearest =
-      m_label->interpolation() == ScaledImageLabel::Interpolation::Nearest;
+  const QString mode =
+      ScaledImageLabel::interpolationName(m_label->interpolation());
   const QString zoom = QString::number(m_label->currentScale(), 'f', 3);
-  QString tag = "x" + zoom + (nearest ? "_nearest" : "_bicubic");
-  QString settings =
-      QString("%1, %2x%3").arg(nearest ? "nearest" : "bicubic", zoom,
-                               m_label->isFitToWindow() ? " (fit)" : "");
+  QString tag = "x" + zoom + "_" + mode;
+  QString settings = QString("%1, %2x%3").arg(
+      mode, zoom, m_label->isFitToWindow() ? " (fit)" : "");
   if (m_label->isInverted()) {
     tag += "_inv";
     settings += ", inverted";
@@ -1060,16 +1079,29 @@ void ImageViewer::createInfoPanel() {
     mainLayout->addWidget(panel, 0);
 }
 
+// I cycles nearest -> bicubic -> lanczos3 -> nearest.
 void ImageViewer::toggleInterpolation() {
   using Mode = ScaledImageLabel::Interpolation;
-  m_label->setInterpolation(m_label->interpolation() == Mode::Nearest
-                                ? Mode::Bicubic
-                                : Mode::Nearest);
+  Mode next = Mode::Nearest;
+  switch (m_label->interpolation()) {
+  case Mode::Nearest:
+    next = Mode::Bicubic;
+    break;
+  case Mode::Bicubic:
+    next = Mode::Lanczos3;
+    break;
+  case Mode::Lanczos3:
+    next = Mode::Nearest;
+    break;
+  }
+  m_label->setInterpolation(next);
   updateWindowTitle();
-  statusBar()->showMessage(m_label->interpolation() == Mode::Nearest
-                               ? "Nearest resampling (true pixels)"
-                               : "Bicubic resampling",
-                           kSettingMessageMs);
+  QString message = ScaledImageLabel::interpolationName(next);
+  message[0] = message[0].toUpper();
+  message += " resampling";
+  if (next == Mode::Nearest)
+    message += " (true pixels)";
+  statusBar()->showMessage(message, kSettingMessageMs);
 }
 
 // e.g. "frame_0012.png (12/48) – Image Viewer [nearest, 3.138×]" or
@@ -1083,9 +1115,7 @@ void ImageViewer::updateWindowTitle() {
       m_viewInfoLabel->setText("No image open");
     return;
   }
-  const bool nearest =
-      m_label->interpolation() == ScaledImageLabel::Interpolation::Nearest;
-  QString info = nearest ? "nearest" : "bicubic";
+  QString info = ScaledImageLabel::interpolationName(m_label->interpolation());
   if (m_label->isInverted())
     info += ", inverted";
   if (m_label->gammaStep() != 0)
@@ -1185,8 +1215,6 @@ void ImageViewer::updateHelpPanel() {
     const char *action;
     QString value;
   };
-  const bool nearest =
-      m_label->interpolation() == ScaledImageLabel::Interpolation::Nearest;
   const Row rows[] = {
       {"", "View", {}},
       {"+ =  -", "Zoom in, out (wheel: at the pointer)", {}},
@@ -1194,7 +1222,8 @@ void ImageViewer::updateHelpPanel() {
       {"r", "Zoom to 1:1", {}},
       {"← ↑ → ↓", "Pan; drag also pans", {}},
       {"Shift+arrows", "Pan by one image pixel", {}},
-      {"i", "Resampling: nearest, bicubic", nearest ? "nearest" : "bicubic"},
+      {"i", "Resampling: nearest, bicubic, lanczos3",
+       ScaledImageLabel::interpolationName(m_label->interpolation())},
       {"", "Tone", {}},
       {"n", "Invert colors", m_label->isInverted() ? "on" : "off"},
       {".  ,", "Gamma up (darker), down", QString::number(m_label->gamma(), 'f', 2)},

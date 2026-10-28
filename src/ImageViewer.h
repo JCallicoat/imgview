@@ -86,9 +86,12 @@ public:
   // How the image is resampled when zoomed in past 100%. Zooming out always
   // uses a smooth (area-averaging) downscale.
   enum class Interpolation {
-    Nearest, // stored pixel values, unmodified (default)
-    Bicubic, // smoother, interpolated
+    Nearest,  // stored pixel values, unmodified (default)
+    Bicubic,  // smoother, interpolated
+    Lanczos3, // sharper interpolation than bicubic, slight edge ringing
   };
+  // "nearest", "bicubic" or "lanczos3", as shown in the title and file names.
+  static QString interpolationName(Interpolation mode);
 
   explicit ScaledImageLabel(QWidget *parent = nullptr);
   void setPixmap(const QPixmap &pixmap);

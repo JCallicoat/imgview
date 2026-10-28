@@ -29,6 +29,12 @@ QImage resampleNearest(const QImage &src, const QSize &outSize,
 QImage resampleBicubic(const QImage &src, const QSize &outSize,
                        const QPointF &origin, double step);
 
+// Lanczos3 (windowed sinc, three lobes): sharper than bicubic, but with more
+// ringing (faint halos) at hard edges and about 1.5x the work. Also
+// interpolating, like bicubic.
+QImage resampleLanczos3(const QImage &src, const QSize &outSize,
+                        const QPointF &origin, double step);
+
 // Per-channel tone mapping table: output = lut[input] for each of R, G, B.
 using ToneLut = std::array<quint8, 256>;
 
