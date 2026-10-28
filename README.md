@@ -16,7 +16,7 @@ It was built for examining images such as Mars rover frames for artifacts like c
 - **Info panel** – file size, dimensions and a table of the EXIF, XMP and IPTC metadata, with selectable values.
 - **Save the view** – save exactly what's shown, with zoom and tone adjustments applied, as a lossless PNG.
 - **Status in the window title** – file name and position in the folder, resampling mode, tone settings and exact zoom factor.
-- **Key hints** in a status bar at the bottom of the window; in fullscreen it also shows the title's file and view info.
+- **Help panel** (`?`) listing every key with the current view settings, and a status bar with hints for the most used keys and a brief confirmation of each setting change; in fullscreen it also shows the title's file and view info.
 
 ## Usage
 
@@ -58,13 +58,19 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | `;` | Saturation up: more vivid colors, up to 1600 % |
 | `L` | Saturation down: towards grey, down to 0 % |
 | `'` | Reset saturation to 100 % |
+| `Backspace` | Reset inversion, gamma and saturation at once |
+| `?` | Show / hide the help panel |
 | `M` | Show / hide the info panel |
 | `O` | Open an image with a file picker |
 | `S` | Save the view as shown (PNG, next to the image) |
 | `Shift` + `S` | Save the view, choosing where |
-| `F` | Toggle fullscreen (the status bar then shows the title's info) |
-| `Esc` | Leave fullscreen; outside fullscreen, quit |
+| `F` | Toggle fullscreen |
+| `Esc` | Close the help panel, or leave fullscreen, or quit |
 | `Q` | Quit |
+
+**Help panel:** `?` opens a panel on the left listing every key, with the current resampling mode, inversion, gamma and saturation beside their keys. All keys keep working while it's open, so you can try a key and watch its effect; `?` or `Esc` closes it.
+
+**Status bar:** hints for the most used keys (cut off from the right when the window is narrow, so `help: ?` stays visible); in fullscreen, the title's file and view info on the right (see below). Changing a view setting shows the new value there for two seconds, e.g. `Saturation 336%`, or `Gamma 8.00 (maximum)` at a limit.
 
 All keys except the arrow keys work wherever keyboard focus is, including in the info panel (while you are typing in a metadata cell, keys go into the cell). The arrow keys pan only while the image has focus (click the image to give it focus), so they still move between cells in the metadata table.
 
@@ -85,7 +91,7 @@ frame_0013.png (13/48) – Image Viewer [bicubic, fit 0.421×]
 - **sat** – shown when saturation isn't 100 %.
 - **zoom factor** – image pixels to screen pixels, with three decimals so a near-1 zoom such as `0.998×` can't be mistaken for exactly `1.000×`. `fit` means the image is being fitted to the window.
 
-In fullscreen there's no title bar, so the same information appears on the right of the status bar, e.g. `frame_0012.png (12/48)  [nearest, inverted, γ 1.68, 3.138×]`. If space is short, the key hints are cut off rather than this.
+In fullscreen there's no title bar, so the same information appears on the right of the status bar, e.g. `frame_0012.png (12/48)  [nearest, inverted, γ 1.68, sat 60%, 3.138×]`. If space is short, the key hints are cut off rather than this.
 
 ## Viewing true pixels
 
@@ -291,7 +297,7 @@ If a build fails after tagging, fix it, then move the tag to the fixed commit (`
 
 ```
 src/main.cpp                    Entry point: options, file picker, macOS open events
-src/ImageViewer.h/.cpp          Main window (info panel, keys, title, status bar)
+src/ImageViewer.h/.cpp          Main window (info and help panels, keys, title, status bar)
                                 and the zoomable, pannable image view
 src/Resample.h/.cpp             Nearest and bicubic resamplers, tone adjustments (invert/gamma tables, saturation)
 data/imgview.desktop.in         Desktop entry template (installed as imgview.desktop)

@@ -21,6 +21,7 @@
 #include <QPainter>
 #include <QRegularExpression>
 #include <QResizeEvent>
+#include <QScrollBar>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTableWidgetItem>
@@ -532,23 +533,24 @@ QString formatFileSize(qint64 bytes) {
 }
 } // namespace
 
+// View setting changes are confirmed briefly in the status bar, where they
+// are easier to notice than in the title.
+static constexpr int kSettingMessageMs = 2000;
+
 ImageViewer::ImageViewer(const QString &path, QWidget *parent)
     : QMainWindow(parent) {
   resize(800, 600);
 
-  // Key hints. Keys are space-separated (',' and '-' are keys themselves).
-  // A minimum width of 1 lets the window shrink below the text width; the
-  // text is then clipped, with the full list still in the tooltip.
-  const QString hints = QStringLiteral(
-      "zoom: - + 0 r  |  pan: ← ↑ → ↓ (shift: 1 px)  |  prev/next image: ← →  |  "
-      "interp: i  |  "
-      "invert: n  |  gamma: , . /  |  sat: l ; '  |  info: m  |  open: o  |  "
-      "save view: s (shift: save as)  |  fullscreen: f  |  "
-      "quit: q");
-  QLabel *hintLabel = new QLabel(hints, this);
+  // Hints for the most used keys; ? shows them all. Keys are space-separated
+  // (',' and '-' are keys themselves). A minimum width of 1 lets the window
+  // shrink below the text width; the text is then clipped.
+  QLabel *hintLabel = new QLabel(
+      QStringLiteral("help: ?  |  zoom: - + 0 r  |  pan: ← ↑ → ↓  |  "
+                     "prev/next: ← →  |  interp: i  |  invert: n  |  info: m  |  "
+                     "open: o  |  fullscreen: f  |  quit: q"),
+      this);
   hintLabel->setMinimumWidth(1);
   hintLabel->setContentsMargins(6, 0, 0, 0);
-  hintLabel->setToolTip(hints);
   // Ignored: the hints only get the space the view info label leaves over,
   // so in fullscreen it's the hints that get clipped, never the view info.
   hintLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -1064,6 +1066,10 @@ void ImageViewer::toggleInterpolation() {
                                 ? Mode::Bicubic
                                 : Mode::Nearest);
   updateWindowTitle();
+  statusBar()->showMessage(m_label->interpolation() == Mode::Nearest
+                               ? "Nearest resampling (true pixels)"
+                               : "Bicubic resampling",
+                           kSettingMessageMs);
 }
 
 // e.g. "frame_0012.png (12/48) – Image Viewer [nearest, 3.138×]" or
@@ -1112,14 +1118,127 @@ void ImageViewer::changeEvent(QEvent *event) {
 
 void ImageViewer::toggleInverted() {
   m_label->setInverted(!m_label->isInverted());
+  statusBar()->showMessage(m_label->isInverted() ? "Inverted" : "Not inverted",
+                           kSettingMessageMs);
 }
 
 void ImageViewer::stepGamma(int delta) {
-  m_label->setGammaStep(m_label->gammaStep() + delta);
+  const int before = m_label->gammaStep();
+  m_label->setGammaStep(before + delta);
+  QString message = QString("Gamma %1").arg(m_label->gamma(), 0, 'f', 2);
+  if (m_label->gammaStep() == before)
+    message += delta > 0 ? " (maximum)" : " (minimum)";
+  statusBar()->showMessage(message, kSettingMessageMs);
 }
 
 void ImageViewer::stepSaturation(int delta) {
-  m_label->setSaturationStep(m_label->saturationStep() + delta);
+  const int before = m_label->saturationStep();
+  m_label->setSaturationStep(before + delta);
+  QString message =
+      QString("Saturation %1%").arg(m_label->saturationPercent());
+  if (m_label->saturationStep() == before)
+    message += delta > 0 ? " (maximum)" : " (minimum)";
+  statusBar()->showMessage(message, kSettingMessageMs);
+}
+
+// Backspace: undo every tone adjustment at once, so none is left on by
+// accident. Zoom and resampling mode are left as they are.
+void ImageViewer::resetTone() {
+  m_label->setInverted(false);
+  m_label->setGammaStep(0);
+  m_label->setSaturationStep(0);
+  statusBar()->showMessage("Inversion, gamma and saturation reset",
+                           kSettingMessageMs);
+}
+
+// The help panel on the left lists every key, with the current value of
+// each view setting. It doesn't take keyboard focus, so all keys keep
+// working while it's open and their effect can be watched next to it.
+void ImageViewer::toggleHelpPanel() {
+  if (!m_helpPanel) {
+    m_helpLabel = new QLabel;
+    m_helpLabel->setTextFormat(Qt::RichText);
+    m_helpLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    m_helpLabel->setContentsMargins(8, 8, 8, 8);
+    m_helpPanel = new QScrollArea(this);
+    m_helpPanel->setWidget(m_helpLabel);
+    m_helpPanel->setWidgetResizable(true);
+    m_helpPanel->setFrameShape(QFrame::NoFrame);
+    m_helpPanel->setFocusPolicy(Qt::NoFocus);
+    m_helpPanel->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_helpPanel->hide();
+    connect(m_label, &ScaledImageLabel::viewChanged, this,
+            &ImageViewer::updateHelpPanel);
+    if (auto *mainLayout =
+            qobject_cast<QHBoxLayout *>(centralWidget()->layout()))
+      mainLayout->insertWidget(0, m_helpPanel, 0);
+  }
+  m_helpPanel->setVisible(!m_helpPanel->isVisible());
+  updateHelpPanel();
+}
+
+void ImageViewer::updateHelpPanel() {
+  if (!m_helpPanel || !m_helpPanel->isVisible())
+    return;
+  struct Row {
+    const char *keys; // empty for a section heading
+    const char *action;
+    QString value;
+  };
+  const bool nearest =
+      m_label->interpolation() == ScaledImageLabel::Interpolation::Nearest;
+  const Row rows[] = {
+      {"", "View", {}},
+      {"+ =  -", "Zoom in, out (wheel: at the pointer)", {}},
+      {"0", "Fit to the window", {}},
+      {"r", "Zoom to 1:1", {}},
+      {"← ↑ → ↓", "Pan; drag also pans", {}},
+      {"Shift+arrows", "Pan by one image pixel", {}},
+      {"i", "Resampling: nearest, bicubic", nearest ? "nearest" : "bicubic"},
+      {"", "Tone", {}},
+      {"n", "Invert colors", m_label->isInverted() ? "on" : "off"},
+      {".  ,", "Gamma up (darker), down", QString::number(m_label->gamma(), 'f', 2)},
+      {"/", "Reset gamma", {}},
+      {";  l", "Saturation up, down",
+       QString("%1%").arg(m_label->saturationPercent())},
+      {"'", "Reset saturation", {}},
+      {"Backspace", "Reset inversion, gamma, saturation", {}},
+      {"", "Images", {}},
+      {"← →", "Previous, next image (when it fits)", {}},
+      {"o", "Open an image", {}},
+      {"s", "Save the view as PNG", {}},
+      {"Shift+s", "Save the view as…", {}},
+      {"", "Window", {}},
+      {"m", "Info panel", {}},
+      {"f", "Fullscreen", {}},
+      {"?", "This help", {}},
+      {"Esc", "Close help, leave fullscreen, or quit", {}},
+      {"q", "Quit", {}},
+  };
+  QString html = "<table cellspacing='0' cellpadding='3'>";
+  for (const Row &row : rows) {
+    if (!*row.keys) {
+      html += QString("<tr><td colspan='3' style='padding-top: 10px'>"
+                      "<b>%1</b></td></tr>")
+                  .arg(row.action);
+      continue;
+    }
+    html += QString("<tr><td style='padding-right: 12px'><b>%1</b></td>"
+                    "<td>%2</td><td width='70' align='right'>%3</td></tr>")
+                .arg(QString(row.keys).toHtmlEscaped(),
+                     QString(row.action).toHtmlEscaped(),
+                     row.value.toHtmlEscaped());
+  }
+  html += "</table>";
+  if (html != m_helpLabel->text()) {
+    m_helpLabel->setText(html);
+    // Wide enough for the text, with room for the scroll bar a short
+    // window needs. The value column has a fixed width, so changing
+    // values don't resize the image view.
+    m_helpPanel->setFixedWidth(
+        m_helpLabel->sizeHint().width() +
+        m_helpPanel->verticalScrollBar()->sizeHint().width());
+  }
 }
 
 void ImageViewer::toggleFullScreen() {
@@ -1143,8 +1262,10 @@ void ImageViewer::toggleInfoPanel() {
 bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
   switch (event->key()) {
   case Qt::Key_Escape:
-    // Leave fullscreen first rather than quitting straight out of it.
-    if (isFullScreen())
+    // Close help or leave fullscreen first rather than quitting.
+    if (m_helpPanel && m_helpPanel->isVisible())
+      m_helpPanel->hide();
+    else if (isFullScreen())
       showNormal();
     else
       close();
@@ -1154,6 +1275,12 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
     return true;
   case Qt::Key_M:
     toggleInfoPanel();
+    return true;
+  case Qt::Key_Question:
+    toggleHelpPanel();
+    return true;
+  case Qt::Key_Backspace:
+    resetTone();
     return true;
   case Qt::Key_O:
     showOpenDialog();
@@ -1178,6 +1305,7 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
     return true;
   case Qt::Key_Slash: // reset gamma (inversion is left as it is)
     m_label->setGammaStep(0);
+    statusBar()->showMessage("Gamma reset to 1.00", kSettingMessageMs);
     return true;
   case Qt::Key_Semicolon: // more saturated, for more dramatic colours
     stepSaturation(1);
@@ -1187,6 +1315,7 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
     return true;
   case Qt::Key_Apostrophe: // reset saturation
     m_label->setSaturationStep(0);
+    statusBar()->showMessage("Saturation reset to 100%", kSettingMessageMs);
     return true;
   case Qt::Key_R: {
     // Actual size, centred on the pointer if it's over the image.

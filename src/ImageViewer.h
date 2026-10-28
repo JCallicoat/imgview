@@ -8,6 +8,7 @@
 #include <QMap>
 #include <QPixmap>
 #include <QPointF>
+#include <QScrollArea>
 #include <QString>
 #include <QStringList>
 #include <QTableWidget>
@@ -47,6 +48,9 @@ private:
   void toggleInverted();
   void stepGamma(int delta);
   void stepSaturation(int delta);
+  void resetTone();
+  void toggleHelpPanel();
+  void updateHelpPanel();
   void updateWindowTitle();
 
   // Image loading and folder navigation.
@@ -67,6 +71,10 @@ private:
   int m_folderCount = 0;  // list, 0-based, and the number of images there
   ScaledImageLabel *m_label = nullptr;
   QWidget *m_infoPanel = nullptr;
+  // Key reference on the left, created on first use. m_helpLabel holds its
+  // text, which shows the current view settings.
+  QScrollArea *m_helpPanel = nullptr;
+  QLabel *m_helpLabel = nullptr;
   // Status bar copy of the title's file/view info, shown only in fullscreen
   // (where there's no title bar).
   QLabel *m_viewInfoLabel = nullptr;
