@@ -13,8 +13,8 @@ imgview, iv \- image viewer for close inspection of pixels and metadata
 .B imgview
 shows an image scaled to the window. When zoomed in it shows the stored
 pixel values unmodified (nearest neighbour) by default, and it can invert
-colors and adjust gamma to make faint features easier to spot. An info panel
-shows the file size, dimensions and EXIF, XMP and IPTC metadata.
+colors and adjust gamma and saturation to make faint features easier to
+spot. An info panel shows the file size, dimensions and EXIF, XMP and IPTC metadata.
 .PP
 .I path
 may be an image file or a folder; for a folder, its first image is opened.
@@ -57,6 +57,10 @@ Toggle color inversion.
 .B . , /
 Gamma up (darker), gamma down (brighter), reset gamma.
 .TP
+.B ; l \(aq
+Saturation up (more vivid; doubles every 4 presses, up to 1600%),
+saturation down (by 10%, down to grey), reset saturation to 100%.
+.TP
 .B m
 Show or hide the info panel.
 .TP
@@ -64,7 +68,8 @@ Show or hide the info panel.
 Open an image with a file picker.
 .TP
 .B s
-Save the image area as shown (zoom, inversion and gamma applied) as a PNG
+Save the image area as shown (zoom, inversion, gamma and saturation
+applied) as a PNG
 next to the image, or in the Pictures folder if that isn't writable. With
 Shift: choose where to save.
 .TP

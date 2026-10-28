@@ -38,7 +38,11 @@ using ToneLut = std::array<quint8, 256>;
 // white map to themselves (or each other when inverted), so nothing clips.
 ToneLut buildToneLut(bool invert, double gamma);
 
-// Apply `lut` to the colour channels in place, leaving alpha unchanged.
-// Translucent pixels are un-premultiplied, mapped and re-premultiplied.
-// `img` must be Format_ARGB32_Premultiplied.
-void applyLut(QImage &img, const ToneLut &lut);
+// Adjust the colour channels in place, leaving alpha unchanged: first scale
+// saturation linearly around the pixel's Rec. 709 luma L,
+//   out = L + saturation * (in - L),
+// on the stored values (saturation 1 = unchanged, 0 = grey, > 1 more
+// saturated), then map each channel through `lut`. Above 1 a channel can
+// overshoot [0, 255] and is clamped. Translucent pixels are un-premultiplied,
+// adjusted and re-premultiplied. `img` must be Format_ARGB32_Premultiplied.
+void applyTone(QImage &img, const ToneLut &lut, double saturation);

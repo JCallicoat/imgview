@@ -2,7 +2,7 @@
 
 A small, fast image viewer for **close inspection of pixels and metadata**, written in C++17 with **Qt 6 Widgets** (no QML) and **Exiv2**.
 
-It was built for examining images such as Mars rover frames for artifacts like cosmic-ray hits, so by default it shows the image's stored pixel values as they are when zoomed in, and adds a few display-only tools (color inversion, gamma) that make faint features easier to spot without changing the file.
+It was built for examining images such as Mars rover frames for artifacts like cosmic-ray hits, so by default it shows the image's stored pixel values as they are when zoomed in, and adds a few display-only tools (color inversion, gamma, saturation) that make faint features easier to spot without changing the file.
 
 ## Features
 
@@ -12,8 +12,9 @@ It was built for examining images such as Mars rover frames for artifacts like c
 - **Folder browsing** – step to the previous or next image in the same folder, in natural order (`frame2` before `frame10`), keeping your view settings.
 - **color inversion** – turns a faint light streak on a dark background into a dark streak on a light one.
 - **Gamma adjustment** – step a gamma curve to stretch contrast in the bright or dark end of the image.
+- **Saturation adjustment** – boost color saturation up to 16× to make faint color differences stand out (such as mineral colors on the Moon), or reduce it down to greyscale.
 - **Info panel** – file size, dimensions and a table of the EXIF, XMP and IPTC metadata, with selectable values.
-- **Save the view** – save exactly what's shown, with zoom, inversion and gamma applied, as a lossless PNG.
+- **Save the view** – save exactly what's shown, with zoom and tone adjustments applied, as a lossless PNG.
 - **Status in the window title** – file name and position in the folder, resampling mode, tone settings and exact zoom factor.
 - **Key hints** in a status bar at the bottom of the window; in fullscreen it also shows the title's file and view info.
 
@@ -54,6 +55,9 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | `.` | Gamma up: darker, more contrast among bright values |
 | `,` | Gamma down: brighter, more contrast among dark values |
 | `/` | Reset gamma to 1 (inversion is left as it is) |
+| `;` | Saturation up: more vivid colors, up to 1600 % |
+| `L` | Saturation down: towards grey, down to 0 % |
+| `'` | Reset saturation to 100 % |
 | `M` | Show / hide the info panel |
 | `O` | Open an image with a file picker |
 | `S` | Save the view as shown (PNG, next to the image) |
@@ -64,20 +68,21 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 
 All keys except the arrow keys work wherever keyboard focus is, including in the info panel (while you are typing in a metadata cell, keys go into the cell). The arrow keys pan only while the image has focus (click the image to give it focus), so they still move between cells in the metadata table.
 
-**Previous / next image:** `←` and `→` switch images when the whole image fits in the window (at fit-to-window, for example). When the image is wider than the window, they pan as usual. When it's only taller than the window (say a tall image at 1:1), they do nothing, so you can't jump to another image by accident while panning up and down. Press `0` to fit, then `←` / `→` to move on. The folder's list is every file Qt can read, matched by extension (case-insensitively), sorted naturally, and rescanned on every press, so files added or removed meanwhile are picked up. (With several paths given, it's that list instead; listed files deleted meanwhile are skipped.) It wraps around: `→` on the last image goes to the first and `←` on the first goes to the last, with a short message in the status bar when that happens. Interpolation mode, inversion and gamma stay as they are; zoom resets to fit; the info panel updates for the new file.
+**Previous / next image:** `←` and `→` switch images when the whole image fits in the window (at fit-to-window, for example). When the image is wider than the window, they pan as usual. When it's only taller than the window (say a tall image at 1:1), they do nothing, so you can't jump to another image by accident while panning up and down. Press `0` to fit, then `←` / `→` to move on. The folder's list is every file Qt can read, matched by extension (case-insensitively), sorted naturally, and rescanned on every press, so files added or removed meanwhile are picked up. (With several paths given, it's that list instead; listed files deleted meanwhile are skipped.) It wraps around: `→` on the last image goes to the first and `←` on the first goes to the last, with a short message in the status bar when that happens. Interpolation mode, inversion, gamma and saturation stay as they are; zoom resets to fit; the info panel updates for the new file.
 
 ### Window title
 
 The title shows the file, its position in the folder, and the current view settings, for example:
 
 ```
-frame_0012.png (12/48) – Image Viewer [nearest, inverted, γ 1.68, 3.138×]
+frame_0012.png (12/48) – Image Viewer [nearest, inverted, γ 1.68, sat 60%, 3.138×]
 frame_0013.png (13/48) – Image Viewer [bicubic, fit 0.421×]
 ```
 
 - **nearest / bicubic** – how the image is resampled when zoomed in.
 - **inverted** – shown when color inversion is on.
 - **γ** – shown when gamma isn't 1.
+- **sat** – shown when saturation isn't 100 %.
 - **zoom factor** – image pixels to screen pixels, with three decimals so a near-1 zoom such as `0.998×` can't be mistaken for exactly `1.000×`. `fit` means the image is being fitted to the window.
 
 In fullscreen there's no title bar, so the same information appears on the right of the status bar, e.g. `frame_0012.png (12/48)  [nearest, inverted, γ 1.68, 3.138×]`. If space is short, the key hints are cut off rather than this.
@@ -93,7 +98,7 @@ In fullscreen there's no title bar, so the same information appears on the right
 
 Only the visible part of the image is resampled, at the display's real pixel resolution, using all CPU cores. Memory use therefore doesn't grow with the zoom level. If a bicubic render is too slow to keep up while dragging (very large windows on slower machines), a quick preview is shown during the drag and the full render appears as soon as the view is still.
 
-## Tone adjustments: invert and gamma
+## Tone adjustments: invert, gamma and saturation
 
 These change only what is displayed, never the file. They are applied after resampling, to what is on screen:
 
@@ -101,18 +106,21 @@ These change only what is displayed, never the file. They are applied after resa
 2. **Gamma** (`.` `,` `/`) applies *out* = 255 · (*in* / 255)^γ. Each key press multiplies or divides γ by 2^(1/4) ≈ 1.19, up to 12 steps either way (γ from 0.13 to 8.00). Black and white always stay black and white, so nothing is clipped.
    - **γ > 1** (`.`) darkens the midtones and stretches differences among bright values. On an inverted dark frame this is what makes a faint streak stand out: a streak at level 240 on a 250 background becomes 157 on 218 at γ 8.
    - **γ < 1** (`,`) does the opposite, stretching differences among dark values. That suits a light feature on a dark background without inversion.
+3. **Saturation** (`;` `L` `'`) scales each color's distance from its grey level: *out* = *L* + *s* · (*in* − *L*), where *L* is the pixel's Rec. 709 luma (0.2126 R + 0.7152 G + 0.0722 B) and *s* is the saturation, 100 % by default. It works on the stored values, before the gamma curve; inversion doesn't change the result, as inverting and changing saturation can be done in either order. Greyscale images are unaffected.
+   - **Above 100 %** (`;`) colors become more vivid. Each press multiplies *s* by 2^(1/4) ≈ 1.19, so it doubles every 4 presses: 119 %, 141 %, 168 %, 200 %, … 400 %, … 800 %, … up to 1600 % after 16 presses. Large boosts bring out color differences of only a few levels, as in the "mineral moon" images of the lunar surface: a nearly grey (120, 122, 125) becomes a clear blue (90, 122, 170) at 1600 %. They amplify color noise and compression artifacts just as much (JPEG's 8 × 8 blocks and color bleeding at edges show up strongly), so compare against other frames or a less compressed source before trusting a faint color. Channels pushed past 0 or 255 are clipped, which shifts the hue of already strong colors and merges the clipped levels.
+   - **Below 100 %** (`L`) colors move towards grey in steps of 10 %, reaching greyscale at 0 % after 10 presses. Nothing is clipped here: pure red (255, 0, 0) at 60 % becomes (175, 22, 22).
 
-With inversion off and γ = 1 the image is drawn untouched, so nearest mode still shows the exact stored values.
+With inversion off, γ = 1 and saturation at 100 % the image is drawn untouched, so nearest mode still shows the exact stored values.
 
 Gamma only redistributes the 256 levels that are already there. Strong settings make the stretched end look stepped and merge levels at the other end, and they amplify noise along with real features, so a moderate setting often reads best.
 
 ## Saving the view
 
-`S` saves what the image area shows right now – the visible part of the image, with the current resampling, inversion and gamma applied – as a lossless PNG. No window background or interface is included, and it's saved at the display's resolution, so at 1:1 in nearest mode the file holds the exact (tone-adjusted) pixel values.
+`S` saves what the image area shows right now – the visible part of the image, with the current resampling, inversion, gamma and saturation applied – as a lossless PNG. No window background or interface is included, and it's saved at the display's resolution, so at 1:1 in nearest mode the file holds the exact (tone-adjusted) pixel values.
 
-- **Where:** next to the image, named after it and the view settings, e.g. `frame_0012_view_x3.000_nearest_inv_g1.68.png`. An existing file is never overwritten: `-2`, `-3`, … is added instead. If the image's folder isn't writable, the file goes to your Pictures folder. The status bar shows where it was saved, and so does the terminal or log: each save prints a line to standard output, e.g. `imgview: saved view to /data/sol42/frame_0012_view_x3.000_nearest_inv.png (nearest, 3.000x, inverted; source region x=812 y=440 w=300 h=220)`. A failed save is reported on standard error.
+- **Where:** next to the image, named after it and the view settings, e.g. `frame_0012_view_x3.000_nearest_inv_g1.68_sat60.png`. An existing file is never overwritten: `-2`, `-3`, … is added instead. If the image's folder isn't writable, the file goes to your Pictures folder. The status bar shows where it was saved, and so does the terminal or log: each save prints a line to standard output, e.g. `imgview: saved view to /data/sol42/frame_0012_view_x3.000_nearest_inv.png (nearest, 3.000x, inverted; source region x=812 y=440 w=300 h=220)`. A failed save is reported on standard error.
 - **Save as:** `Shift` + `S` opens a save dialog instead (PNG by default; TIFF and other formats by file extension).
-- **Provenance:** the PNG's text fields record the source file, the view settings and which part of the source image is visible, e.g. `nearest, 3.000x, inverted, gamma 1.68; source region x=812 y=440 w=300 h=220` (shown by tools such as `exiftool` or `pngcheck -t`).
+- **Provenance:** the PNG's text fields record the source file, the view settings and which part of the source image is visible, e.g. `nearest, 3.000x, inverted, gamma 1.68, saturation 60%; source region x=812 y=440 w=300 h=220` (shown by tools such as `exiftool` or `pngcheck -t`).
 
 On a HiDPI display the file has the display's real pixel count: at 1:1 with 200 % display scaling, each image pixel becomes a 2 × 2 block.
 
@@ -285,7 +293,7 @@ If a build fails after tagging, fix it, then move the tag to the fixed commit (`
 src/main.cpp                    Entry point: options, file picker, macOS open events
 src/ImageViewer.h/.cpp          Main window (info panel, keys, title, status bar)
                                 and the zoomable, pannable image view
-src/Resample.h/.cpp             Nearest and bicubic resamplers, tone (invert/gamma) tables
+src/Resample.h/.cpp             Nearest and bicubic resamplers, tone adjustments (invert/gamma tables, saturation)
 data/imgview.desktop.in         Desktop entry template (installed as imgview.desktop)
 data/imgview.1                  Man page
 packaging/macos/                macOS Info.plist, icon (and its generator), Exiv2

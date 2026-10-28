@@ -88,10 +88,24 @@ double ScaledImageLabel::gamma() const {
   return std::pow(2.0, m_gammaStep / 4.0);
 }
 
+void ScaledImageLabel::setSaturationStep(int step) {
+  step = qBound(kMinSaturationStep, step, kMaxSaturationStep);
+  if (step == m_saturationStep)
+    return;
+  m_saturationStep = step;
+  rebuildToneLut();
+}
+
+double ScaledImageLabel::saturation() const {
+  return m_saturationStep <= 0 ? 1.0 + 0.1 * m_saturationStep
+                               : std::pow(2.0, m_saturationStep / 4.0);
+}
+
 // Called whenever a tone setting changes. A future curve type (levels,
 // S-curve) would be built here too.
 void ScaledImageLabel::rebuildToneLut() {
-  m_toneIsIdentity = !m_inverted && m_gammaStep == 0;
+  m_toneIsIdentity = !m_inverted && m_gammaStep == 0 &&
+                     m_saturationStep == 0;
   m_toneLut = buildToneLut(m_inverted, gamma());
   m_adjustedCache = QImage();
   update();
@@ -106,10 +120,10 @@ const QImage &ScaledImageLabel::forDisplay(const QImage &rendered) {
   if (m_adjustedCache.isNull() ||
       m_adjustedSourceKey != rendered.cacheKey()) {
     // convertToFormat() is a no-op for the formats used here, and
-    // applyLut() then detaches, so `rendered` itself is untouched.
+    // applyTone() then detaches, so `rendered` itself is untouched.
     m_adjustedCache =
         rendered.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-    applyLut(m_adjustedCache, m_toneLut);
+    applyTone(m_adjustedCache, m_toneLut, saturation());
     m_adjustedSourceKey = rendered.cacheKey();
   }
   return m_adjustedCache;
@@ -277,7 +291,7 @@ void ScaledImageLabel::paintEvent(QPaintEvent *event) {
         painter.setRenderHint(QPainter::SmoothPixmapTransform, smooth);
         painter.drawImage(visible, m_original, source);
       } else {
-        // Draw the preview off-screen so the tone curve can be applied.
+        // Draw the preview off-screen so the tone adjustments can be applied.
         QImage preview(outSize, QImage::Format_ARGB32_Premultiplied);
         preview.setDevicePixelRatio(dpr);
         preview.fill(Qt::transparent);
@@ -286,7 +300,7 @@ void ScaledImageLabel::paintEvent(QPaintEvent *event) {
         p.translate(-pos);
         p.drawImage(visible, m_original, source);
         p.end();
-        applyLut(preview, m_toneLut);
+        applyTone(preview, m_toneLut, saturation());
         painter.drawImage(pos, preview);
       }
       return;
@@ -528,7 +542,7 @@ ImageViewer::ImageViewer(const QString &path, QWidget *parent)
   const QString hints = QStringLiteral(
       "zoom: - + 0 r  |  pan: ← ↑ → ↓ (shift: 1 px)  |  prev/next image: ← →  |  "
       "interp: i  |  "
-      "invert: n  |  gamma: , . /  |  info: m  |  open: o  |  "
+      "invert: n  |  gamma: , . /  |  sat: l ; '  |  info: m  |  open: o  |  "
       "save view: s (shift: save as)  |  fullscreen: f  |  "
       "quit: q");
   QLabel *hintLabel = new QLabel(hints, this);
@@ -701,7 +715,7 @@ QString uniquePath(const QString &dir, const QString &stem) {
 }
 } // namespace
 
-// S saves what the image area shows (resampling, inversion and gamma
+// S saves what the image area shows (resampling and tone adjustments
 // applied, at display resolution) as a lossless PNG next to the image, or in
 // the Pictures folder if the image's folder isn't writable. Shift+S asks
 // where to save. The PNG's text fields record the source and view settings.
@@ -731,6 +745,11 @@ void ImageViewer::saveView(bool chooseLocation) {
     const QString g = QString::number(m_label->gamma(), 'f', 2);
     tag += "_g" + g;
     settings += ", gamma " + g;
+  }
+  if (m_label->saturationStep() != 0) {
+    const QString sat = QString::number(m_label->saturationPercent());
+    tag += "_sat" + sat;
+    settings += ", saturation " + sat + "%";
   }
   const QRect region = m_label->visibleSourceRect().toAlignedRect();
 
@@ -1048,7 +1067,7 @@ void ImageViewer::toggleInterpolation() {
 }
 
 // e.g. "frame_0012.png (12/48) – Image Viewer [nearest, 3.138×]" or
-// "... [nearest, inverted, γ 1.68, fit 0.421×]". The
+// "... [nearest, inverted, γ 1.68, sat 60%, fit 0.421×]". The
 // mode is shown because it changes what the pixels mean; three decimals so a
 // near-1 wheel zoom can't be mistaken for exactly 1:1.
 void ImageViewer::updateWindowTitle() {
@@ -1065,6 +1084,8 @@ void ImageViewer::updateWindowTitle() {
     info += ", inverted";
   if (m_label->gammaStep() != 0)
     info += QString(", γ %1").arg(m_label->gamma(), 0, 'f', 2);
+  if (m_label->saturationStep() != 0)
+    info += QString(", sat %1%").arg(m_label->saturationPercent());
   if (!m_label->originalSize().isEmpty()) {
     info += QString(", %1%2×")
                 .arg(m_label->isFitToWindow() ? "fit " : "")
@@ -1095,6 +1116,10 @@ void ImageViewer::toggleInverted() {
 
 void ImageViewer::stepGamma(int delta) {
   m_label->setGammaStep(m_label->gammaStep() + delta);
+}
+
+void ImageViewer::stepSaturation(int delta) {
+  m_label->setSaturationStep(m_label->saturationStep() + delta);
 }
 
 void ImageViewer::toggleFullScreen() {
@@ -1153,6 +1178,15 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
     return true;
   case Qt::Key_Slash: // reset gamma (inversion is left as it is)
     m_label->setGammaStep(0);
+    return true;
+  case Qt::Key_Semicolon: // more saturated, for more dramatic colours
+    stepSaturation(1);
+    return true;
+  case Qt::Key_L: // less saturated, down to grey
+    stepSaturation(-1);
+    return true;
+  case Qt::Key_Apostrophe: // reset saturation
+    m_label->setSaturationStep(0);
     return true;
   case Qt::Key_R: {
     // Actual size, centred on the pointer if it's over the image.

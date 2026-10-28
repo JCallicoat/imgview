@@ -46,6 +46,7 @@ private:
   void toggleFullScreen();
   void toggleInverted();
   void stepGamma(int delta);
+  void stepSaturation(int delta);
   void updateWindowTitle();
 
   // Image loading and folder navigation.
@@ -94,7 +95,7 @@ public:
   void clearImage();
 
   // What the image area shows right now, as an image at display resolution:
-  // the visible part of the image with resampling, inversion and gamma
+  // the visible part of the image with resampling and tone adjustments
   // applied, without the surrounding background. Null if nothing is shown.
   QImage renderVisible();
   // The part of the original image that is visible, in image pixels.
@@ -116,8 +117,8 @@ public:
   Interpolation interpolation() const { return m_interpolation; }
   void setInterpolation(Interpolation mode);
 
-  // Display tone adjustments, applied after resampling: optional colour
-  // inversion, then a gamma curve.
+  // Display tone adjustments, applied after resampling: a saturation
+  // change, optional colour inversion, then a gamma curve.
   bool isInverted() const { return m_inverted; }
   void setInverted(bool inverted);
 
@@ -128,6 +129,18 @@ public:
   int gammaStep() const { return m_gammaStep; }
   void setGammaStep(int step);
   double gamma() const;
+
+  // Saturation factor (1 = unchanged, the default) set in steps, step in
+  // [kMinSaturationStep, kMaxSaturationStep]. Negative steps reduce it
+  // linearly by 0.1 each, down to 0 (grey). Positive steps multiply it by
+  // 2^(1/4) each, like gamma, so it doubles every 4 steps up to 16x, enough
+  // to bring out the faint colour differences in e.g. lunar images.
+  static constexpr int kMinSaturationStep = -10;
+  static constexpr int kMaxSaturationStep = 16;
+  int saturationStep() const { return m_saturationStep; }
+  void setSaturationStep(int step);
+  double saturation() const;
+  int saturationPercent() const { return qRound(saturation() * 100); }
 
 signals:
   // Scale, fit state or interpolation mode may have changed.
@@ -181,13 +194,15 @@ private:
   // full render once the view has been still for a moment.
   Interpolation m_interpolation = Interpolation::Nearest;
 
-  // Tone adjustments (inversion + gamma) are applied to the resampled image
-  // just before drawing, through m_toneLut. m_adjustedCache holds the
-  // adjusted copy of the render whose cacheKey() is m_adjustedSourceKey;
-  // it's cleared whenever the tone settings change.
+  // Tone adjustments (saturation, inversion + gamma) are applied to the
+  // resampled image just before drawing, through applyTone() with
+  // m_toneLut. m_adjustedCache holds the adjusted copy of the render whose
+  // cacheKey() is m_adjustedSourceKey; it's cleared whenever the tone
+  // settings change.
   void rebuildToneLut();
   bool m_inverted = false;
   int m_gammaStep = 0;
+  int m_saturationStep = 0;
   bool m_toneIsIdentity = true;
   ToneLut m_toneLut{};
   QImage m_adjustedCache;

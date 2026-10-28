@@ -189,10 +189,14 @@ ToneLut buildToneLut(bool invert, double gamma) {
   return lut;
 }
 
-void applyLut(QImage &img, const ToneLut &lut) {
+void applyTone(QImage &img, const ToneLut &lut, double saturation) {
   if (img.isNull())
     return;
   Q_ASSERT(img.format() == QImage::Format_ARGB32_Premultiplied);
+  // Saturation and the Rec. 709 luma weights (0.2126, 0.7152, 0.0722) in
+  // 1/256ths; the weights add up to 256.
+  const int s = int(std::lround(std::max(saturation, 0.0) * 256));
+  constexpr uint kR = 54, kG = 183, kB = 19;
   uchar *const bits = img.bits(); // see resampleNearest()
   const qsizetype bpl = img.bytesPerLine();
   const int w = img.width();
@@ -202,17 +206,31 @@ void applyLut(QImage &img, const ToneLut &lut) {
       for (int x = 0; x < w; ++x) {
         const QRgb p = line[x];
         const uint a = p >> 24;
-        if (a == 255) { // opaque: plain lookup
-          line[x] = 0xff000000u | (uint(lut[(p >> 16) & 0xff]) << 16) |
-                    (uint(lut[(p >> 8) & 0xff]) << 8) | lut[p & 0xff];
-        } else if (a != 0) { // translucent: map the straight colour
-          auto map = [&](uint c) {
-            const uint straight = (c * 255 + a / 2) / a;
-            return (uint(lut[std::min(straight, 255u)]) * a + 127) / 255;
+        if (a == 0) // fully transparent pixels stay as they are
+          continue;
+        uint r = (p >> 16) & 0xff, g = (p >> 8) & 0xff, bl = p & 0xff;
+        if (a != 255) { // translucent: adjust the straight colour
+          auto straight = [a](uint c) {
+            return std::min((c * 255 + a / 2) / a, 255u);
           };
-          line[x] = (a << 24) | (map((p >> 16) & 0xff) << 16) |
-                    (map((p >> 8) & 0xff) << 8) | map(p & 0xff);
-        } // fully transparent pixels stay as they are
+          r = straight(r), g = straight(g), bl = straight(bl);
+        }
+        if (s != 256) {
+          // L + s * (c - L), rounded. It stays within [0, 255] for s <= 1;
+          // above that it can overshoot and is clamped.
+          const int l = int((kR * r + kG * g + kB * bl + 128) >> 8);
+          auto saturate = [l, s](uint c) {
+            const int v = l * 256 + (int(c) - l) * s + 128;
+            return v <= 0 ? 0u : std::min(uint(v) >> 8, 255u);
+          };
+          r = saturate(r), g = saturate(g), bl = saturate(bl);
+        }
+        r = lut[r], g = lut[g], bl = lut[bl];
+        if (a != 255) {
+          auto premultiply = [a](uint c) { return (c * a + 127) / 255; };
+          r = premultiply(r), g = premultiply(g), bl = premultiply(bl);
+        }
+        line[x] = (a << 24) | (r << 16) | (g << 8) | bl;
       }
     }
   });
