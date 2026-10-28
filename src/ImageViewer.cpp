@@ -561,6 +561,66 @@ QString formatFileSize(qint64 bytes) {
       QLocale().formattedDataSize(bytes, 1, QLocale::DataSizeIecFormat);
   return QString("%1 (%2 bytes)").arg(human).arg(bytes);
 }
+
+// Metadata table labels: Exiv2's label ("Color Space"), or the tag name
+// when it has none.
+QString metadataLabel(const Exiv2::Metadatum &kv) {
+  const std::string label = kv.tagLabel();
+  return QString::fromStdString(label.empty() ? kv.tagName() : label);
+}
+
+// "CameraProfiles" -> "Camera Profiles", "RadialDistortParam1" -> "Radial
+// Distort Param 1", "LensID" -> "Lens ID", "action" -> "Action": the style of
+// Exiv2's own labels, for property names it has no label for.
+QString wordsFromName(QString name) {
+  static const QRegularExpression boundary(
+      "(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=[0-9])");
+  name.replace(boundary, " ");
+  if (!name.isEmpty())
+    name[0] = name[0].toUpper();
+  return name;
+}
+
+// Label for one XMP property name: Exiv2's label if it has a real one
+// (crs:ToneCurvePV2012 -> "Tone Curve PV 2012"), else the name split into
+// words. Exiv2 returns the bare name for properties it doesn't list, and
+// throws for namespaces it doesn't know (such as stCamera).
+QString xmpPropertyLabel(const std::string &prefix, const QString &name) {
+  try {
+    const std::string label =
+        Exiv2::XmpKey("Xmp." + prefix + "." + name.toStdString()).tagLabel();
+    if (!label.empty() && QString::fromStdString(label) != name)
+      return QString::fromStdString(label);
+  } catch (const Exiv2::Error &) {
+    // unknown namespace
+  }
+  return wordsFromName(name);
+}
+
+// Top-level XMP properties get a readable label ("Creator Tool"). Properties
+// nested in structs and arrays are labelled by their own name with its
+// namespace prefix, e.g. "stCamera:Author" for photoshop:CameraProfiles[1]/
+// stCamera:Author; the Tag tooltip shows the full path.
+QString metadataLabel(const Exiv2::Xmpdatum &kv) {
+  const QString name = QString::fromStdString(kv.tagName());
+  const int slash = name.lastIndexOf('/');
+  if (slash >= 0)
+    return name.mid(slash + 1);
+  return xmpPropertyLabel(kv.groupName(), name);
+}
+
+// Exiv2 lists each XMP struct or array that holds nested properties as an
+// entry of its own, with a placeholder value such as type="Seq", followed by
+// the nested properties. Plain-valued arrays (e.g. a tone curve) have their
+// own value types and are shown.
+bool isMetadataPlaceholder(const Exiv2::Metadatum &) { return false; }
+bool isMetadataPlaceholder(const Exiv2::Xmpdatum &kv) {
+  if (kv.typeId() != Exiv2::xmpText)
+    return false;
+  const auto *v = dynamic_cast<const Exiv2::XmpValue *>(&kv.value());
+  return v && (v->xmpStruct() != Exiv2::XmpValue::xsNone ||
+               v->xmpArrayType() != Exiv2::XmpValue::xaNone);
+}
 } // namespace
 
 // View setting changes are confirmed briefly in the status bar, where they
@@ -1001,26 +1061,38 @@ void ImageViewer::createInfoPanel() {
     table->setSpan(row, 0, 1, 2);
   };
   // The cell shows the interpreted value ("sRGB"); the raw stored value
-  // ("1") is its tooltip when the two differ.
+  // ("1") is its tooltip when the two differ. The tag's tooltip is its full
+  // Exiv2 key (e.g. "Exif.Photo.ColorSpace"), when it has one.
   auto addTag = [table](const QString &tag, const QString &value,
-                        const QString &raw = QString()) {
+                        const QString &raw = QString(),
+                        const QString &key = QString()) {
     const int row = table->rowCount();
     table->insertRow(row);
+    auto *tagItem = new QTableWidgetItem(tag);
+    if (!key.isEmpty())
+      tagItem->setToolTip(key);
     auto *valueItem = new QTableWidgetItem(value);
     if (!raw.isEmpty() && raw != value)
       valueItem->setToolTip(QString("Raw value: %1").arg(raw));
-    table->setItem(row, 0, new QTableWidgetItem(tag));
+    table->setItem(row, 0, tagItem);
     table->setItem(row, 1, valueItem);
   };
   // exif gives print() context for values that depend on other EXIF tags.
+  // Each entry is read on its own, so one Exiv2 can't interpret is shown by
+  // its key and raw value instead of ending the table there.
   auto addData = [&addTag](const auto &data, const Exiv2::ExifData *exif) {
     for (const auto &kv : data) {
-      std::string label = kv.tagLabel();
-      if (label.empty())
-        label = kv.tagName();
-      addTag(QString::fromStdString(label),
-             QString::fromStdString(kv.print(exif)),
-             QString::fromStdString(kv.value().toString()));
+      if (isMetadataPlaceholder(kv))
+        continue;
+      const QString key = QString::fromStdString(kv.key());
+      const QString raw = QString::fromStdString(kv.value().toString());
+      try {
+        addTag(metadataLabel(kv), QString::fromStdString(kv.print(exif)), raw,
+               key);
+      } catch (const Exiv2::Error &e) {
+        qWarning("Exiv2 error for %s: %s", kv.key().c_str(), e.what());
+        addTag(key, raw);
+      }
     }
   };
 

@@ -137,7 +137,7 @@ Press `M` to show the panel beside the image:
 
 - **File size**, for example `184.9 KiB (189345 bytes)`, using binary units (KiB, MiB, GiB = 1024-based).
 - **Dimensions** of the original image in pixels.
-- **Metadata** read with Exiv2, one tag per row, in **EXIF**, **XMP** and **IPTC** sections (each shown only if the file has it). Values are shown interpreted, as `sRGB` or `inch` rather than `1` or `2`; hover over a value to see the raw stored value when it differs. Tags that only point to other parts of the EXIF data (such as the Exif IFD pointer) are left out, since the tags they point to are listed.
+- **Metadata** read with Exiv2, one tag per row, in **EXIF**, **XMP** and **IPTC** sections (each shown only if the file has it). Values are shown interpreted, as `sRGB` or `inch` rather than `1` or `2`; hover over a value to see the raw stored value when it differs, or over a tag to see its full Exiv2 key (e.g. `Exif.Photo.ColorSpace`). XMP properties nested in structures and arrays are labelled by their own name with its namespace prefix, e.g. `stCamera:Author`, with the full path (`Xmp.photoshop.CameraProfiles[1]/stCamera:Author`) in the tooltip; the structures themselves aren't listed as rows of their own. Tags that only point to other parts of the EXIF data (such as the Exif IFD pointer) are left out, since the tags they point to are listed.
 
 The file size and dimension values can be selected with the mouse and copied. The metadata table cells can be edited in place for convenience, but edits are never written back to the file.
 
