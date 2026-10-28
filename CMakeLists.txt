@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 # The version must match the release tag (vX.Y.Z); the release workflow
 # checks this.
-project(imgview VERSION 1.3.0
+project(imgview VERSION 1.3.1
         DESCRIPTION "Image viewer for close inspection of pixels and metadata"
         HOMEPAGE_URL "https://github.com/JCallicoat/imgview"
         LANGUAGES CXX)
