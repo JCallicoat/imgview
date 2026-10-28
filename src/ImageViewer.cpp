@@ -19,6 +19,7 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QRegularExpression>
 #include <QResizeEvent>
 #include <QStandardPaths>
 #include <QStatusBar>
@@ -920,7 +921,7 @@ void ImageViewer::createInfoPanel() {
   }
   layout->addLayout(form);
 
-  // EXIF data table
+  // Metadata table: EXIF, XMP and IPTC sections
   QTableWidget *table = new QTableWidget(this);
   table->setColumnCount(2);
   table->setHorizontalHeaderLabels({"Tag", "Value"});
@@ -937,24 +938,85 @@ void ImageViewer::createInfoPanel() {
   table->setEditTriggers(QTableWidget::AllEditTriggers);
   table->installEventFilter(this);
 
+  // A bold, non-editable row spanning both columns, e.g. "XMP".
+  auto addSection = [table](const QString &title) {
+    const int row = table->rowCount();
+    table->insertRow(row);
+    auto *item = new QTableWidgetItem(title);
+    item->setFlags(Qt::ItemIsEnabled);
+    QFont font = item->font();
+    font.setBold(true);
+    item->setFont(font);
+    table->setItem(row, 0, item);
+    table->setSpan(row, 0, 1, 2);
+  };
+  // The cell shows the interpreted value ("sRGB"); the raw stored value
+  // ("1") is its tooltip when the two differ.
+  auto addTag = [table](const QString &tag, const QString &value,
+                        const QString &raw = QString()) {
+    const int row = table->rowCount();
+    table->insertRow(row);
+    auto *valueItem = new QTableWidgetItem(value);
+    if (!raw.isEmpty() && raw != value)
+      valueItem->setToolTip(QString("Raw value: %1").arg(raw));
+    table->setItem(row, 0, new QTableWidgetItem(tag));
+    table->setItem(row, 1, valueItem);
+  };
+  // exif gives print() context for values that depend on other EXIF tags.
+  auto addData = [&addTag](const auto &data, const Exiv2::ExifData *exif) {
+    for (const auto &kv : data) {
+      std::string label = kv.tagLabel();
+      if (label.empty())
+        label = kv.tagName();
+      addTag(QString::fromStdString(label),
+             QString::fromStdString(kv.print(exif)),
+             QString::fromStdString(kv.value().toString()));
+    }
+  };
+
   if (!m_imagePath.isEmpty()) try { // nothing to read for an empty folder
     auto image = Exiv2::ImageFactory::open(m_imagePath.toUtf8().constData());
     // .get(): open() returns std::auto_ptr in Exiv2 0.27 (no bool
     // conversion) and std::unique_ptr in 0.28.
     if (image.get()) {
       image->readMetadata();
-      const auto &exifData = image->exifData();
+
+      // Offsets of the Exif, GPS, Interoperability and sub-IFDs: Exiv2 has
+      // already read the tags they point to, so they mean nothing on their own.
+      Exiv2::ExifData exifData = image->exifData();
+      for (const char *key :
+           {"Exif.Image.ExifTag", "Exif.Image.GPSTag",
+            "Exif.Photo.InteroperabilityTag", "Exif.Image.SubIFDs"}) {
+        auto it = exifData.findKey(Exiv2::ExifKey(key));
+        if (it != exifData.end())
+          exifData.erase(it);
+      }
       if (!exifData.empty()) {
-        table->setRowCount(static_cast<int>(exifData.count()));
-        int row = 0;
-        for (const auto &kv : exifData) {
-          QString tag =
-              QString::fromStdString(kv.tagLabel()); // kv.getTagName()
-          QString value = QString::fromStdString(kv.value().toString());
-          table->setItem(row, 0, new QTableWidgetItem(tag));
-          table->setItem(row, 1, new QTableWidgetItem(value));
-          ++row;
-        }
+        addSection("EXIF");
+        addData(exifData, &exifData);
+      }
+
+      // The toolkit is an attribute of the packet itself, not a property,
+      // so it isn't among the XMP data. writeXmpFromPacket(true) makes
+      // xmpPacket() return the packet as read rather than Exiv2's
+      // re-encoding of it (toolkit "XMP Core 4.4.0-Exiv2"). For some formats
+      // (JPEG XL, HEIF) Exiv2 doesn't keep the packet as read, so there's no
+      // toolkit to show.
+      image->writeXmpFromPacket(true);
+      static const QRegularExpression xmptk(
+          R"re(x:xmptk\s*=\s*["']([^"']*)["'])re");
+      const QString toolkit =
+          xmptk.match(QString::fromStdString(image->xmpPacket())).captured(1);
+      if (!image->xmpData().empty() || !toolkit.isEmpty()) {
+        addSection("XMP");
+        if (!toolkit.isEmpty())
+          addTag("XMP Toolkit", toolkit);
+        addData(image->xmpData(), &exifData);
+      }
+
+      if (!image->iptcData().empty()) {
+        addSection("IPTC");
+        addData(image->iptcData(), &exifData);
       }
     }
   } catch (const Exiv2::Error &e) {
@@ -963,7 +1025,7 @@ void ImageViewer::createInfoPanel() {
     qWarning("Exception: %s", e.what());
   }
 
-  layout->addWidget(new QLabel("<b>EXIF Data:</b>"));
+  layout->addWidget(new QLabel("<b>Metadata:</b>"));
   layout->addWidget(table);
 
   table->resizeRowsToContents();
@@ -1114,7 +1176,7 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
   }
 }
 
-// The EXIF table would otherwise eat the shortcut keys (type-to-edit and
+// The metadata table would otherwise eat the shortcut keys (type-to-edit and
 // keyboard search). While a cell is being edited the editor widget has
 // focus instead of the table, so typing in a cell is unaffected.
 bool ImageViewer::eventFilter(QObject *watched, QEvent *event) {
@@ -1126,7 +1188,7 @@ bool ImageViewer::eventFilter(QObject *watched, QEvent *event) {
 
 // Left/Right reach here when nothing used them first: the image view passes
 // them up when the image isn't wider than the window. They're deliberately
-// not in handleShortcutKey(), so they still move between EXIF table cells.
+// not in handleShortcutKey(), so they still move between metadata table cells.
 void ImageViewer::keyPressEvent(QKeyEvent *event) {
   if (handleShortcutKey(event))
     return;

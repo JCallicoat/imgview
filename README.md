@@ -12,7 +12,7 @@ It was built for examining images such as Mars rover frames for artifacts like c
 - **Folder browsing** – step to the previous or next image in the same folder, in natural order (`frame2` before `frame10`), keeping your view settings.
 - **color inversion** – turns a faint light streak on a dark background into a dark streak on a light one.
 - **Gamma adjustment** – step a gamma curve to stretch contrast in the bright or dark end of the image.
-- **Info panel** – file size, dimensions and the full EXIF data table, with selectable values.
+- **Info panel** – file size, dimensions and a table of the EXIF, XMP and IPTC metadata, with selectable values.
 - **Save the view** – save exactly what's shown, with zoom, inversion and gamma applied, as a lossless PNG.
 - **Status in the window title** – file name and position in the folder, resampling mode, tone settings and exact zoom factor.
 - **Key hints** in a status bar at the bottom of the window; in fullscreen it also shows the title's file and view info.
@@ -62,7 +62,7 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | `Esc` | Leave fullscreen; outside fullscreen, quit |
 | `Q` | Quit |
 
-All keys except the arrow keys work wherever keyboard focus is, including in the info panel (while you are typing in an EXIF cell, keys go into the cell). The arrow keys pan only while the image has focus (click the image to give it focus), so they still move between cells in the EXIF table.
+All keys except the arrow keys work wherever keyboard focus is, including in the info panel (while you are typing in a metadata cell, keys go into the cell). The arrow keys pan only while the image has focus (click the image to give it focus), so they still move between cells in the metadata table.
 
 **Previous / next image:** `←` and `→` switch images whenever they have nothing to pan, i.e. when the image isn't wider than the window (at fit-to-window, or a tall image at 1:1). When zoomed in, they pan as usual; press `0` to fit, then `←` / `→` to move on. The folder's list is every file Qt can read, matched by extension (case-insensitively), sorted naturally, and rescanned on every press, so files added or removed meanwhile are picked up. (With several paths given, it's that list instead; listed files deleted meanwhile are skipped.) It wraps around: `→` on the last image goes to the first and `←` on the first goes to the last, with a short message in the status bar when that happens. Interpolation mode, inversion and gamma stay as they are; zoom resets to fit; the info panel updates for the new file.
 
@@ -122,9 +122,9 @@ Press `M` to show the panel beside the image:
 
 - **File size**, for example `184.9 KiB (189345 bytes)`, using binary units (KiB, MiB, GiB = 1024-based).
 - **Dimensions** of the original image in pixels.
-- **EXIF data** read with Exiv2, one tag per row.
+- **Metadata** read with Exiv2, one tag per row, in **EXIF**, **XMP** and **IPTC** sections (each shown only if the file has it). Values are shown interpreted, as `sRGB` or `inch` rather than `1` or `2`; hover over a value to see the raw stored value when it differs. Tags that only point to other parts of the EXIF data (such as the Exif IFD pointer) are left out, since the tags they point to are listed.
 
-The file size and dimension values can be selected with the mouse and copied. The EXIF table cells can be edited in place for convenience, but edits are never written back to the file.
+The file size and dimension values can be selected with the mouse and copied. The metadata table cells can be edited in place for convenience, but edits are never written back to the file.
 
 ## Install a prebuilt package
 

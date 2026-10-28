@@ -2,7 +2,7 @@
 Type=Application
 Name=imgview
 GenericName=Image Viewer
-Comment=Inspect image pixels and EXIF metadata
+Comment=Inspect image pixels and metadata
 Keywords=image;picture;viewer;exif;metadata;pixel;
 Exec=@IMGVIEW_INSTALL_BINARY@ %F
 TryExec=@IMGVIEW_INSTALL_BINARY@

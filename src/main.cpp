@@ -54,7 +54,7 @@ private:
 
 void setUpParser(QCommandLineParser &parser) {
   parser.setApplicationDescription(
-      "Image viewer for close inspection of pixels and EXIF metadata.");
+      "Image viewer for close inspection of pixels and metadata.");
   parser.addHelpOption();
   parser.addVersionOption();
   parser.addPositionalArgument(
