@@ -418,7 +418,8 @@ void ScaledImageLabel::panBy(const QPointF &delta) {
 // view along that axis. They move the view like scrollbars do (Right shows
 // more of the right side): 10% of the view per press, or exactly one image
 // pixel with Shift for stepping across fine detail. An arrow with nothing to
-// pan goes up to the window, where Left/Right switch images.
+// pan goes up to the window, where Left/Right switch images if the image fits
+// the view both ways.
 void ScaledImageLabel::keyPressEvent(QKeyEvent *event) {
   int dx = 0, dy = 0;
   switch (event->key()) {
@@ -1189,10 +1190,14 @@ bool ImageViewer::eventFilter(QObject *watched, QEvent *event) {
 // Left/Right reach here when nothing used them first: the image view passes
 // them up when the image isn't wider than the window. They're deliberately
 // not in handleShortcutKey(), so they still move between metadata table cells.
+// They switch images only when the image fits the view both ways: an image
+// that's only taller than the view can still be panned up and down, so
+// switching then would jump away from a zoomed-in view by accident.
 void ImageViewer::keyPressEvent(QKeyEvent *event) {
   if (handleShortcutKey(event))
     return;
-  if (!(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier))) {
+  if (!(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier)) &&
+      !m_label->canPan()) {
     if (event->key() == Qt::Key_Left) {
       showAdjacentImage(-1);
       return;

@@ -48,7 +48,7 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | Left-drag | Pan (when the image is larger than the window) |
 | `←` `↑` `→` `↓` | Pan by 10 % of the view (when the image view has focus) |
 | `Shift` + arrows | Pan by exactly one image pixel |
-| `←` / `→` (nothing to pan sideways) | Previous / next image in the folder |
+| `←` / `→` (whole image fits in the view) | Previous / next image in the folder |
 | `I` | Toggle zoom-in resampling: **nearest** (true pixels, default) ⇄ **bicubic** (smooth) |
 | `N` | Toggle color inversion |
 | `.` | Gamma up: darker, more contrast among bright values |
@@ -64,7 +64,7 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 
 All keys except the arrow keys work wherever keyboard focus is, including in the info panel (while you are typing in a metadata cell, keys go into the cell). The arrow keys pan only while the image has focus (click the image to give it focus), so they still move between cells in the metadata table.
 
-**Previous / next image:** `←` and `→` switch images whenever they have nothing to pan, i.e. when the image isn't wider than the window (at fit-to-window, or a tall image at 1:1). When zoomed in, they pan as usual; press `0` to fit, then `←` / `→` to move on. The folder's list is every file Qt can read, matched by extension (case-insensitively), sorted naturally, and rescanned on every press, so files added or removed meanwhile are picked up. (With several paths given, it's that list instead; listed files deleted meanwhile are skipped.) It wraps around: `→` on the last image goes to the first and `←` on the first goes to the last, with a short message in the status bar when that happens. Interpolation mode, inversion and gamma stay as they are; zoom resets to fit; the info panel updates for the new file.
+**Previous / next image:** `←` and `→` switch images when the whole image fits in the window (at fit-to-window, for example). When the image is wider than the window, they pan as usual. When it's only taller than the window (say a tall image at 1:1), they do nothing, so you can't jump to another image by accident while panning up and down. Press `0` to fit, then `←` / `→` to move on. The folder's list is every file Qt can read, matched by extension (case-insensitively), sorted naturally, and rescanned on every press, so files added or removed meanwhile are picked up. (With several paths given, it's that list instead; listed files deleted meanwhile are skipped.) It wraps around: `→` on the last image goes to the first and `←` on the first goes to the last, with a short message in the status bar when that happens. Interpolation mode, inversion and gamma stay as they are; zoom resets to fit; the info panel updates for the new file.
 
 ### Window title
 

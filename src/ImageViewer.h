@@ -87,6 +87,8 @@ public:
   void setPixmap(const QImage &image);
 
   QSize originalSize() const { return m_original.size(); }
+  // Whether the image at the current zoom is wider or taller than the view.
+  bool canPan() const;
 
   // Drop the current image (e.g. before showing a "Failed to load" text).
   void clearImage();
@@ -144,7 +146,6 @@ private:
   void resetView();
   double fitScale() const;
   QSizeF scaledSize() const;
-  bool canPan() const;
   void clampOffset();
   void zoomAt(double newScale, const QPointF &anchor);
   void updateCursor();
