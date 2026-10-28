@@ -1,0 +1,26 @@
+# Keeps the macOS build's Qt and Exiv2 caches available to release runs.
+#
+# Release runs are triggered by tags, and a cache saved by a tag run is only
+# visible to that tag, so each release would download Qt and build Exiv2
+# again. Caches saved on main are visible to every tag, so this saves them
+# there on every push to main (including the release target's push, just
+# before the tag). On a cache hit it only restores. GitHub deletes caches
+# unused for 7 days, so after a quiet week the first release builds them
+# again; run this by hand a few minutes before releasing to avoid that.
+name: Warm macOS caches
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-deps:
+    name: macOS dependencies
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/macos-deps

@@ -118,47 +118,20 @@ jobs:
     name: macOS universal
     needs: version
     runs-on: macos-15
-    env:
-      EXIV2_VERSION: v0.28.9
-      # Qt 6.8 LTS supports macOS 12 and later; its macOS binaries contain
-      # both arm64 and x86_64 (make-dmg.sh verifies every bundled binary).
-      QT_VERSION: '6.8.*'
-      CMAKE_OSX_ARCHITECTURES: arm64;x86_64
-      CMAKE_OSX_DEPLOYMENT_TARGET: '12.0'
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: ${{ env.QT_VERSION }}
-          host: mac
-          target: desktop
-          arch: clang_64
-          modules: qtimageformats
-          cache: true
-
-      - name: Install Ninja
-        run: brew install ninja
-
-      - name: Cache Exiv2
-        id: exiv2-cache
-        uses: actions/cache@v6
-        with:
-          path: ${{ runner.temp }}/exiv2
-          key: exiv2-${{ env.EXIV2_VERSION }}-universal-${{ env.CMAKE_OSX_DEPLOYMENT_TARGET }}-${{ hashFiles('packaging/macos/build-exiv2.sh') }}
-
-      - name: Build Exiv2 (static, universal)
-        if: steps.exiv2-cache.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 --branch "$EXIV2_VERSION" https://github.com/Exiv2/exiv2.git "$RUNNER_TEMP/exiv2-src"
-          packaging/macos/build-exiv2.sh "$RUNNER_TEMP/exiv2-src" "$RUNNER_TEMP/exiv2"
+      # Qt, Ninja and Exiv2, restored from the caches the "Warm macOS caches"
+      # workflow keeps on main (see that workflow for why). Also sets the
+      # universal build settings and EXIV2_PREFIX for the steps below.
+      - name: Install build dependencies
+        uses: ./.github/actions/macos-deps
 
       - name: Build imgview.app
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR;$RUNNER_TEMP/exiv2"
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR;$EXIV2_PREFIX"
           cmake --build build
 
       - name: Make the .dmg

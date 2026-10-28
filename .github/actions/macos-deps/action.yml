@@ -1,0 +1,53 @@
+# Qt, Ninja and a static universal Exiv2 for the macOS build, with Qt and
+# Exiv2 cached. Used by the release workflow and by the cache-warming
+# workflow, which saves the caches on main: caches saved by a tag run are
+# only visible to that tag, so release runs restore the ones from main.
+#
+# Also sets, for the job's later steps: CMAKE_OSX_ARCHITECTURES,
+# CMAKE_OSX_DEPLOYMENT_TARGET, EXIV2_PREFIX (Exiv2's install prefix) and,
+# from install-qt-action, QT_ROOT_DIR.
+name: macOS build dependencies
+description: Install Qt and Ninja, and build or restore a static universal Exiv2
+
+runs:
+  using: composite
+  steps:
+    - name: Set build settings
+      shell: bash
+      run: |
+        {
+          echo "CMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+          echo "CMAKE_OSX_DEPLOYMENT_TARGET=12.0"
+          echo "EXIV2_PREFIX=$RUNNER_TEMP/exiv2"
+          echo "EXIV2_VERSION=v0.28.9"
+        } >> "$GITHUB_ENV"
+
+    # Qt 6.8 LTS supports macOS 12 and later; its macOS binaries contain
+    # both arm64 and x86_64 (make-dmg.sh verifies every bundled binary).
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: '6.8.*'
+        host: mac
+        target: desktop
+        arch: clang_64
+        modules: qtimageformats
+        cache: true
+
+    - name: Install Ninja
+      shell: bash
+      run: brew install ninja
+
+    - name: Cache Exiv2
+      id: exiv2-cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ env.EXIV2_PREFIX }}
+        key: exiv2-${{ env.EXIV2_VERSION }}-universal-${{ env.CMAKE_OSX_DEPLOYMENT_TARGET }}-${{ hashFiles('packaging/macos/build-exiv2.sh') }}
+
+    - name: Build Exiv2 (static, universal)
+      if: steps.exiv2-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        git clone --depth 1 --branch "$EXIV2_VERSION" https://github.com/Exiv2/exiv2.git "$RUNNER_TEMP/exiv2-src"
+        packaging/macos/build-exiv2.sh "$RUNNER_TEMP/exiv2-src" "$EXIV2_PREFIX"

@@ -283,6 +283,8 @@ Releases are built by GitHub Actions (`.github/workflows/release.yml`) when a ve
 
 To try the builds without releasing, run the workflow by hand: **Actions → Release → Run workflow**. The packages are then attached to that run instead of a release.
 
+The macOS build restores Qt and a static Exiv2 from caches that a second workflow, **Warm macOS caches** (`.github/workflows/macos-cache.yml`), keeps on `main`: a cache saved by a release run is only visible to its own tag. It runs on every push to `main`, so the caches stay available while you're releasing; GitHub deletes them after a week without use. After a quiet spell, run it by hand (**Actions → Warm macOS caches → Run workflow**) a few minutes before releasing, or the first release builds them again.
+
 If a build fails after tagging, fix it, then move the tag to the fixed commit (`git tag -fa v1.2.0 -m "imgview 1.2.0" && git push -f origin v1.2.0`) to rebuild; the release's files are replaced in place.
 
 ## Known limitations
@@ -306,6 +308,8 @@ data/imgview.1                  Man page
 packaging/macos/                macOS Info.plist, icon (and its generator), Exiv2
                                 build script and .dmg script
 .github/workflows/release.yml   Release builds (.deb, .rpm, .dmg)
+.github/workflows/macos-cache.yml  Keeps the macOS Qt and Exiv2 caches on main
+.github/actions/macos-deps/     Qt, Ninja and Exiv2 setup for the macOS build
 cmake/cmake_uninstall.cmake.in  Script behind the uninstall target
 cmake/release.cmake             Script behind the release target
 arch/PKGBUILD, arch/.SRCINFO    Arch Linux package for the latest release (imgview)
