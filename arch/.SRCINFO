@@ -1,6 +1,6 @@
 pkgbase = imgview
-	pkgdesc = Image viewer for close inspection of pixels and EXIF metadata (Qt 6)
-	pkgver = 1.0.0
+	pkgdesc = Image viewer for close inspection of pixels and metadata (Qt 6)
+	pkgver = 1.3.0
 	pkgrel = 1
 	url = https://github.com/JCallicoat/imgview
 	arch = x86_64
@@ -13,7 +13,7 @@ pkgbase = imgview
 	depends = glibc
 	optdepends = qt6-imageformats: TIFF, WebP, TGA, ICNS, WBMP and JPEG 2000 support
 	optdepends = qt6-svg: SVG support
-	source = imgview-1.0.0.tar.gz::https://github.com/JCallicoat/imgview/archive/refs/tags/v1.0.0.tar.gz
-	sha256sums = 6ec6d60a2ce31a3fd4ee82a8f6b99315e5a7d0c23ea5acdc02fcec662df6395e
+	source = imgview-1.3.0.tar.gz::https://github.com/JCallicoat/imgview/archive/refs/tags/v1.3.0.tar.gz
+	sha256sums = 9f7f4136fd235753a50e6274e00768a4f52346fb6d3e9b275e713ea3eed88853
 
 pkgname = imgview

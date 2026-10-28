@@ -1,9 +1,9 @@
 # Maintainer: Jordan Callicoat <jordan dot callicoat at gmail dot com>
 
 pkgname=imgview
-pkgver=1.0.0
+pkgver=1.3.0
 pkgrel=1
-pkgdesc='Image viewer for close inspection of pixels and EXIF metadata (Qt 6)'
+pkgdesc='Image viewer for close inspection of pixels and metadata (Qt 6)'
 arch=('x86_64' 'aarch64')
 url='https://github.com/JCallicoat/imgview'
 license=('MIT')
@@ -12,7 +12,7 @@ makedepends=('cmake')
 optdepends=('qt6-imageformats: TIFF, WebP, TGA, ICNS, WBMP and JPEG 2000 support'
             'qt6-svg: SVG support')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('6ec6d60a2ce31a3fd4ee82a8f6b99315e5a7d0c23ea5acdc02fcec662df6395e')
+sha256sums=('9f7f4136fd235753a50e6274e00768a4f52346fb6d3e9b275e713ea3eed88853')
 
 build() {
   # CMAKE_BUILD_TYPE=None so makepkg's CFLAGS/CXXFLAGS/LDFLAGS are used as-is.
