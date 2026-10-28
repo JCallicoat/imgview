@@ -82,10 +82,10 @@ The title shows the file, its position in the folder, and the current view setti
 
 ```
 frame_0012.png (12/48) – Image Viewer [nearest, inverted, γ 1.68, sat 60%, 3.138×]
-frame_0013.png (13/48) – Image Viewer [bicubic, fit 0.421×]
+frame_0013.png (13/48) – Image Viewer [area, fit 0.421×]
 ```
 
-- **nearest / bicubic / lanczos3** – how the image is resampled when zoomed in.
+- **nearest / bicubic / lanczos3 / area** – the resampling actually applied: the selected mode when zoomed in, `area` when zoomed out (where every mode uses the same area-averaging downscale). The help panel (`?`) shows the selected mode.
 - **inverted** – shown when color inversion is on.
 - **γ** – shown when gamma isn't 1.
 - **sat** – shown when saturation isn't 100 %.
@@ -101,7 +101,7 @@ In fullscreen there's no title bar, so the same information appears on the right
 - **Bicubic** (Catmull-Rom): smoother and easier on the eye, but it interpolates between pixels and can add a faint halo along hard edges. Not suitable for judging individual pixel values.
 - **Lanczos3** (windowed sinc, three lobes): smooth like bicubic but sharper, keeping more of the fine detail that varies smoothly, such as surface texture in lunar or planetary images. In exchange it rings a little more at hard edges (a faint halo or ripple along, say, a limb against black sky), and it also blends neighbouring pixels, so it hides single-pixel features such as hot pixels. Also not suitable for judging individual pixel values.
 
-**Zoomed out (below 100 %)** the image is shrunk with a smooth, area-averaging filter in all modes.
+**Zoomed out (below 100 %)** the image is shrunk with a smooth, area-averaging filter in all modes, so the title and saved views say `area` rather than the selected mode. (With display scaling, "100 %" means one image pixel per physical screen pixel.)
 
 Only the visible part of the image is resampled, at the display's real pixel resolution, using all CPU cores. Memory use therefore doesn't grow with the zoom level. If a bicubic or Lanczos3 render is too slow to keep up while dragging (very large windows on slower machines), a quick preview is shown during the drag and the full render appears as soon as the view is still.
 

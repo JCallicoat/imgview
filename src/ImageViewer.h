@@ -90,8 +90,12 @@ public:
     Bicubic,  // smoother, interpolated
     Lanczos3, // sharper interpolation than bicubic, slight edge ringing
   };
-  // "nearest", "bicubic" or "lanczos3", as shown in the title and file names.
+  // "nearest", "bicubic" or "lanczos3".
   static QString interpolationName(Interpolation mode);
+  // The resampling actually applied at the current zoom, as shown in the
+  // title and saved file names: "area" when zoomed out (any mode), else the
+  // selected mode's name. At exactly 1:1 every mode shows the stored pixels.
+  QString resamplingName() const;
 
   explicit ScaledImageLabel(QWidget *parent = nullptr);
   void setPixmap(const QPixmap &pixmap);
@@ -168,6 +172,9 @@ protected:
 
 private:
   void resetView();
+  // Whether the view is drawn from the area-averaged downscale rather than
+  // the selected resampler: at or below one image pixel per device pixel.
+  bool isDownscaled() const;
   double fitScale() const;
   QSizeF scaledSize() const;
   void clampOffset();

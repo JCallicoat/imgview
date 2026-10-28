@@ -72,6 +72,16 @@ QString ScaledImageLabel::interpolationName(Interpolation mode) {
   return {};
 }
 
+QString ScaledImageLabel::resamplingName() const {
+  if (!m_original.isNull() && currentScale() * devicePixelRatioF() < 1.0)
+    return "area";
+  return interpolationName(m_interpolation);
+}
+
+bool ScaledImageLabel::isDownscaled() const {
+  return currentScale() * devicePixelRatioF() <= 1.0;
+}
+
 void ScaledImageLabel::setInterpolation(Interpolation mode) {
   if (mode == m_interpolation)
     return;
@@ -257,7 +267,7 @@ void ScaledImageLabel::paintEvent(QPaintEvent *event) {
   const double scale = currentScale();
   const qreal dpr = devicePixelRatioF();
 
-  if (scale * dpr <= 1.0) {
+  if (isDownscaled()) {
     // Zoomed out: cache a smoothly downscaled copy (never larger than the
     // original). QImage::scaled() filters better than the painter's
     // bilinear sampling when shrinking a lot.
@@ -365,7 +375,7 @@ QImage ScaledImageLabel::renderVisible() {
   const double scale = currentScale();
   const qreal dpr = devicePixelRatioF();
   QImage shot;
-  if (scale * dpr <= 1.0) {
+  if (isDownscaled()) {
     // Zoomed out: the cache holds the whole downscaled image; cut out the
     // part that is on screen.
     if (m_scaledCache.isNull())
@@ -752,8 +762,7 @@ void ImageViewer::saveView(bool chooseLocation) {
                     : rendered.convertToFormat(QImage::Format_ARGB32);
 
   // View settings, for the file name and the PNG's text fields.
-  const QString mode =
-      ScaledImageLabel::interpolationName(m_label->interpolation());
+  const QString mode = m_label->resamplingName();
   const QString zoom = QString::number(m_label->currentScale(), 'f', 3);
   QString tag = "x" + zoom + "_" + mode;
   QString settings = QString("%1, %2x%3").arg(
@@ -1101,11 +1110,13 @@ void ImageViewer::toggleInterpolation() {
   message += " resampling";
   if (next == Mode::Nearest)
     message += " (true pixels)";
+  if (m_label->resamplingName() == "area")
+    message += ", used when zoomed in";
   statusBar()->showMessage(message, kSettingMessageMs);
 }
 
 // e.g. "frame_0012.png (12/48) – Image Viewer [nearest, 3.138×]" or
-// "... [nearest, inverted, γ 1.68, sat 60%, fit 0.421×]". The
+// "... [area, inverted, γ 1.68, sat 60%, fit 0.421×]". The
 // mode is shown because it changes what the pixels mean; three decimals so a
 // near-1 wheel zoom can't be mistaken for exactly 1:1.
 void ImageViewer::updateWindowTitle() {
@@ -1115,7 +1126,7 @@ void ImageViewer::updateWindowTitle() {
       m_viewInfoLabel->setText("No image open");
     return;
   }
-  QString info = ScaledImageLabel::interpolationName(m_label->interpolation());
+  QString info = m_label->resamplingName();
   if (m_label->isInverted())
     info += ", inverted";
   if (m_label->gammaStep() != 0)
@@ -1222,7 +1233,7 @@ void ImageViewer::updateHelpPanel() {
       {"r", "Zoom to 1:1", {}},
       {"← ↑ → ↓", "Pan; drag also pans", {}},
       {"Shift+arrows", "Pan by one image pixel", {}},
-      {"i", "Resampling: nearest, bicubic, lanczos3",
+      {"i", "Zoom-in resampling: nearest, bicubic, lanczos3",
        ScaledImageLabel::interpolationName(m_label->interpolation())},
       {"", "Tone", {}},
       {"n", "Invert colors", m_label->isInverted() ? "on" : "off"},
