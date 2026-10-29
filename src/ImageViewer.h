@@ -48,6 +48,7 @@ private:
   void toggleInverted();
   void stepGamma(int delta);
   void stepSaturation(int delta);
+  void toggleSaturationMode();
   void resetTone();
   void toggleHelpPanel();
   void updateHelpPanel();
@@ -156,6 +157,12 @@ public:
   void setSaturationStep(int step);
   double saturation() const;
   int saturationPercent() const { return qRound(saturation() * 100); }
+  // Linear (the default) or vibrance: how the saturation factor is applied;
+  // see applyTone().
+  SaturationMode saturationMode() const { return m_saturationMode; }
+  void setSaturationMode(SaturationMode mode);
+  // "saturation" or "vibrance", for messages and saved view names.
+  QString saturationModeName() const;
 
 signals:
   // Scale, fit state or interpolation mode may have changed.
@@ -221,6 +228,7 @@ private:
   bool m_inverted = false;
   int m_gammaStep = 0;
   int m_saturationStep = 0;
+  SaturationMode m_saturationMode = SaturationMode::Linear;
   bool m_toneIsIdentity = true;
   ToneLut m_toneLut{};
   QImage m_adjustedCache;

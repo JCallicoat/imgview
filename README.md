@@ -16,7 +16,7 @@ It was built for examining images such as Mars rover frames for artifacts like c
 - **Folder browsing** – step to the previous or next image in the same folder, in natural order (`frame2` before `frame10`), keeping your view settings.
 - **color inversion** – turns a faint light streak on a dark background into a dark streak on a light one.
 - **Gamma adjustment** – step a gamma curve to stretch contrast in the bright or dark end of the image.
-- **Saturation adjustment** – boost color saturation up to 16× to make faint color differences stand out (such as mineral colors on the Moon), or reduce it down to greyscale.
+- **Saturation adjustment** – boost color saturation up to 16× to make faint color differences stand out (such as mineral colors on the Moon), or reduce it down to greyscale. A **vibrance** mode boosts muted colors more than vivid ones.
 - **Info panel** – file size, dimensions and a table of the EXIF, XMP and IPTC metadata, with selectable values.
 - **Save the view** – save exactly what's shown, with zoom and tone adjustments applied, as a lossless PNG.
 - **Status in the window title** – file name and position in the folder, resampling mode, tone settings and exact zoom factor.
@@ -62,6 +62,7 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | `;` | Saturation up: more vivid colors, up to 1600 % |
 | `L` | Saturation down: towards grey, down to 0 % |
 | `'` | Reset saturation to 100 % |
+| `B` | Switch saturation between **linear** (default) and **vibrance** |
 | `Backspace` | Reset inversion, gamma and saturation at once |
 | `?` | Show / hide the help panel |
 | `M` | Show / hide the info panel |
@@ -92,7 +93,7 @@ frame_0013.png (13/48) – Image Viewer [area, fit 0.421×]
 - **nearest / bicubic / lanczos3 / area** – the resampling actually applied: the selected mode when zoomed in, `area` when zoomed out (where every mode uses the same area-averaging downscale). The help panel (`?`) shows the selected mode.
 - **inverted** – shown when color inversion is on.
 - **γ** – shown when gamma isn't 1.
-- **sat** – shown when saturation isn't 100 %.
+- **sat** / **vib** – shown when saturation isn't 100 %; `vib` in vibrance mode.
 - **zoom factor** – image pixels to screen pixels, with three decimals so a near-1 zoom such as `0.998×` can't be mistaken for exactly `1.000×`. `fit` means the image is being fitted to the window.
 
 In fullscreen there's no title bar, so the same information appears on the right of the status bar, e.g. `frame_0012.png (12/48)  [nearest, inverted, γ 1.68, sat 60%, 3.138×]`. If space is short, the key hints are cut off rather than this.
@@ -120,6 +121,7 @@ These change only what is displayed, never the file. They are applied after resa
 3. **Saturation** (`;` `L` `'`) scales each color's distance from its grey level: *out* = *L* + *s* · (*in* − *L*), where *L* is the pixel's Rec. 709 luma (0.2126 R + 0.7152 G + 0.0722 B) and *s* is the saturation, 100 % by default. It works on the stored values, before the gamma curve; inversion doesn't change the result, as inverting and changing saturation can be done in either order. Greyscale images are unaffected.
    - **Above 100 %** (`;`) colors become more vivid. Each press multiplies *s* by 2^(1/4) ≈ 1.19, so it doubles every 4 presses: 119 %, 141 %, 168 %, 200 %, … 400 %, … 800 %, … up to 1600 % after 16 presses. Large boosts bring out color differences of only a few levels, as in the "mineral moon" images of the lunar surface: a nearly grey (120, 122, 125) becomes a clear blue (90, 122, 170) at 1600 %. They amplify color noise and compression artifacts just as much (JPEG's 8 × 8 blocks and color bleeding at edges show up strongly), so compare against other frames or a less compressed source before trusting a faint color. Channels pushed past 0 or 255 are clipped, which shifts the hue of already strong colors and merges the clipped levels.
    - **Below 100 %** (`L`) colors move towards grey in steps of 10 %, reaching greyscale at 0 % after 10 presses. Nothing is clipped here: pure red (255, 0, 0) at 60 % becomes (175, 22, 22).
+   - **Vibrance** (`B` switches to it and back): the same change, weighted by how muted each pixel already is. The factor becomes 1 + (*s* − 1) · (1 − *S*), where *S* is the pixel's HSV saturation, (max − min) / max: grey pixels get the full change and fully saturated ones none. Boosted, it brings up near-grey colors as strongly as linear does while keeping strong colors from clipping: at 1600 %, (40, 120, 200) becomes (0, 154, 255) instead of linear's clipped (0, 255, 255). Dark pixels count as relatively saturated, so faint color noise in a dark sky stays put: (2, 0, 1) is unchanged, where linear makes it (32, 0, 16). Reduced, it greys muted colors first and leaves vivid ones. The title, saved view names and PNG text say `vib` / `vibrance` instead of `sat` / `saturation` while it's on, and `'` and `Backspace` reset the amount but keep the mode.
 
 With inversion off, γ = 1 and saturation at 100 % the image is drawn untouched, so nearest mode still shows the exact stored values.
 

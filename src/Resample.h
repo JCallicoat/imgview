@@ -44,11 +44,22 @@ using ToneLut = std::array<quint8, 256>;
 // white map to themselves (or each other when inverted), so nothing clips.
 ToneLut buildToneLut(bool invert, double gamma);
 
+// How applyTone() changes saturation.
+enum class SaturationMode {
+  Linear,   // every pixel by the same factor
+  Vibrance, // muted pixels by the full factor, vivid ones less
+};
+
 // Adjust the colour channels in place, leaving alpha unchanged: first scale
-// saturation linearly around the pixel's Rec. 709 luma L,
-//   out = L + saturation * (in - L),
-// on the stored values (saturation 1 = unchanged, 0 = grey, > 1 more
-// saturated), then map each channel through `lut`. Above 1 a channel can
-// overshoot [0, 255] and is clamped. Translucent pixels are un-premultiplied,
-// adjusted and re-premultiplied. `img` must be Format_ARGB32_Premultiplied.
-void applyTone(QImage &img, const ToneLut &lut, double saturation);
+// saturation around the pixel's Rec. 709 luma L,
+//   out = L + s * (in - L),
+// on the stored values, then map each channel through `lut`. In Linear mode
+// s = saturation (1 = unchanged, 0 = grey, > 1 more saturated). In Vibrance
+// mode the change is weighted by how muted the pixel is,
+//   s = 1 + (saturation - 1) * (1 - S),  S = (max - min) / max
+// (its HSV saturation), so grey pixels get the full change and fully
+// saturated ones none. Channels overshooting [0, 255] are clamped.
+// Translucent pixels are un-premultiplied, adjusted and re-premultiplied.
+// `img` must be Format_ARGB32_Premultiplied.
+void applyTone(QImage &img, const ToneLut &lut, double saturation,
+               SaturationMode mode);

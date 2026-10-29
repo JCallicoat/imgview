@@ -119,6 +119,18 @@ void ScaledImageLabel::setSaturationStep(int step) {
   rebuildToneLut();
 }
 
+void ScaledImageLabel::setSaturationMode(SaturationMode mode) {
+  if (mode == m_saturationMode)
+    return;
+  m_saturationMode = mode;
+  rebuildToneLut();
+}
+
+QString ScaledImageLabel::saturationModeName() const {
+  return m_saturationMode == SaturationMode::Vibrance ? "vibrance"
+                                                      : "saturation";
+}
+
 double ScaledImageLabel::saturation() const {
   return m_saturationStep <= 0 ? 1.0 + 0.1 * m_saturationStep
                                : std::pow(2.0, m_saturationStep / 4.0);
@@ -146,7 +158,7 @@ const QImage &ScaledImageLabel::forDisplay(const QImage &rendered) {
     // applyTone() then detaches, so `rendered` itself is untouched.
     m_adjustedCache =
         rendered.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-    applyTone(m_adjustedCache, m_toneLut, saturation());
+    applyTone(m_adjustedCache, m_toneLut, saturation(), m_saturationMode);
     m_adjustedSourceKey = rendered.cacheKey();
   }
   return m_adjustedCache;
@@ -324,7 +336,7 @@ void ScaledImageLabel::paintEvent(QPaintEvent *event) {
         p.translate(-pos);
         p.drawImage(visible, m_original, source);
         p.end();
-        applyTone(preview, m_toneLut, saturation());
+        applyTone(preview, m_toneLut, saturation(), m_saturationMode);
         painter.drawImage(pos, preview);
       }
       return;
@@ -837,9 +849,10 @@ void ImageViewer::saveView(bool chooseLocation) {
     settings += ", gamma " + g;
   }
   if (m_label->saturationStep() != 0) {
+    const QString name = m_label->saturationModeName(); // "saturation" or "vibrance"
     const QString sat = QString::number(m_label->saturationPercent());
-    tag += "_sat" + sat;
-    settings += ", saturation " + sat + "%";
+    tag += "_" + name.left(3) + sat; // e.g. "_sat168", "_vib168"
+    settings += ", " + name + " " + sat + "%";
   }
   const QRect region = m_label->visibleSourceRect().toAlignedRect();
 
@@ -1204,7 +1217,9 @@ void ImageViewer::updateWindowTitle() {
   if (m_label->gammaStep() != 0)
     info += QString(", γ %1").arg(m_label->gamma(), 0, 'f', 2);
   if (m_label->saturationStep() != 0)
-    info += QString(", sat %1%").arg(m_label->saturationPercent());
+    info += QString(", %1 %2%")
+                .arg(m_label->saturationModeName().left(3))
+                .arg(m_label->saturationPercent());
   if (!m_label->originalSize().isEmpty()) {
     info += QString(", %1%2×")
                 .arg(m_label->isFitToWindow() ? "fit " : "")
@@ -1247,11 +1262,26 @@ void ImageViewer::stepGamma(int delta) {
 void ImageViewer::stepSaturation(int delta) {
   const int before = m_label->saturationStep();
   m_label->setSaturationStep(before + delta);
-  QString message =
-      QString("Saturation %1%").arg(m_label->saturationPercent());
+  QString message = m_label->saturationModeName();
+  message[0] = message[0].toUpper();
+  message += QString(" %1%").arg(m_label->saturationPercent());
   if (m_label->saturationStep() == before)
     message += delta > 0 ? " (maximum)" : " (minimum)";
   statusBar()->showMessage(message, kSettingMessageMs);
+}
+
+// B switches how the saturation factor is applied: the same to every pixel,
+// or weighted towards muted pixels (vibrance). The amount is kept.
+void ImageViewer::toggleSaturationMode() {
+  m_label->setSaturationMode(m_label->saturationMode() ==
+                                     SaturationMode::Linear
+                                 ? SaturationMode::Vibrance
+                                 : SaturationMode::Linear);
+  statusBar()->showMessage(
+      m_label->saturationMode() == SaturationMode::Vibrance
+          ? "Vibrance: boosts muted colors more than vivid ones"
+          : "Linear saturation: same change for every color",
+      kSettingMessageMs);
 }
 
 // Backspace: undo every tone adjustment at once, so none is left on by
@@ -1314,6 +1344,9 @@ void ImageViewer::updateHelpPanel() {
       {";  l", "Saturation up, down",
        QString("%1%").arg(m_label->saturationPercent())},
       {"'", "Reset saturation", {}},
+      {"b", "Saturation mode: linear, vibrance",
+       m_label->saturationMode() == SaturationMode::Vibrance ? "vibrance"
+                                                              : "linear"},
       {"Backspace", "Reset inversion, gamma, saturation", {}},
       {"", "Images", {}},
       {"← →", "Previous, next image (when it fits)", {}},
@@ -1425,9 +1458,12 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
   case Qt::Key_L: // less saturated, down to grey
     stepSaturation(-1);
     return true;
-  case Qt::Key_Apostrophe: // reset saturation
+  case Qt::Key_Apostrophe: // reset saturation (the mode is kept)
     m_label->setSaturationStep(0);
     statusBar()->showMessage("Saturation reset to 100%", kSettingMessageMs);
+    return true;
+  case Qt::Key_B:
+    toggleSaturationMode();
     return true;
   case Qt::Key_R: {
     // Actual size, centred on the pointer if it's over the image.

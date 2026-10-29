@@ -232,7 +232,8 @@ ToneLut buildToneLut(bool invert, double gamma) {
   return lut;
 }
 
-void applyTone(QImage &img, const ToneLut &lut, double saturation) {
+void applyTone(QImage &img, const ToneLut &lut, double saturation,
+               SaturationMode mode) {
   if (img.isNull())
     return;
   Q_ASSERT(img.format() == QImage::Format_ARGB32_Premultiplied);
@@ -259,11 +260,19 @@ void applyTone(QImage &img, const ToneLut &lut, double saturation) {
           r = straight(r), g = straight(g), bl = straight(bl);
         }
         if (s != 256) {
-          // L + s * (c - L), rounded. It stays within [0, 255] for s <= 1;
+          int ps = s; // this pixel's factor, in 1/256ths
+          if (mode == SaturationMode::Vibrance) {
+            // Weight the change by 1 - S, S = HSV saturation in 1/256ths.
+            const int mx = int(std::max({r, g, bl}));
+            const int mn = int(std::min({r, g, bl}));
+            const int sat = mx == 0 ? 0 : (mx - mn) * 256 / mx;
+            ps = 256 + (s - 256) * (256 - sat) / 256;
+          }
+          // L + ps * (c - L), rounded. It stays within [0, 255] for ps <= 1;
           // above that it can overshoot and is clamped.
           const int l = int((kR * r + kG * g + kB * bl + 128) >> 8);
-          auto saturate = [l, s](uint c) {
-            const int v = l * 256 + (int(c) - l) * s + 128;
+          auto saturate = [l, ps](uint c) {
+            const int v = l * 256 + (int(c) - l) * ps + 128;
             return v <= 0 ? 0u : std::min(uint(v) >> 8, 255u);
           };
           r = saturate(r), g = saturate(g), bl = saturate(bl);
