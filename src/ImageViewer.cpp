@@ -3,6 +3,8 @@
 #include "ImageViewer.h"
 #include "Resample.h"
 #include <QApplication>
+#include <QBuffer>
+#include <QClipboard>
 #include <QCursor>
 #include <QDebug>
 #include <QDir>
@@ -17,6 +19,7 @@
 #include <QKeyEvent>
 #include <QLocale>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QRegularExpression>
@@ -649,7 +652,7 @@ ImageViewer::ImageViewer(const QString &path, QWidget *parent)
   QLabel *hintLabel = new QLabel(
       QStringLiteral("help: ?  |  zoom: - + 0 r  |  pan: ← ↑ → ↓  |  "
                      "prev/next: ← →  |  interp: i  |  invert: n  |  info: m  |  "
-                     "open: o  |  fullscreen: f  |  quit: q"),
+                     "open: o  |  paste: ctrl+v  |  fullscreen: f  |  quit: q"),
       this);
   hintLabel->setMinimumWidth(1);
   hintLabel->setContentsMargins(6, 0, 0, 0);
@@ -681,7 +684,8 @@ ImageViewer::ImageViewer(const QString &path, QWidget *parent)
   mainLayout->addWidget(m_label, 1);
 
   if (path.isEmpty())
-    m_label->setText("No image open.\nPress O to open an image.");
+    m_label->setText("No image open.\nPress O to open an image, or Ctrl+V to "
+                     "paste one.");
   else
     openPath(path);
 }
@@ -708,6 +712,63 @@ void ImageViewer::showOpenDialog() {
     openPath(file);
 }
 
+// Ctrl+V. The clipboard's image types are tried in the order it offers them
+// (the source's preference; browsers offer image/png for a copied image),
+// each with Qt's reader for that type, or detected from the data if Qt has
+// none registered under that name. If none can be read, an image the
+// clipboard offers already decoded is used. Without any image on the
+// clipboard, the open image stays.
+void ImageViewer::pasteImage() {
+  const QMimeData *mime = QApplication::clipboard()->mimeData();
+  QImage image;
+  QString type;
+  QByteArray data;
+  if (mime) {
+    for (const QString &format : mime->formats()) {
+      if (!format.startsWith("image/"))
+        continue;
+      QByteArray bytes = mime->data(format);
+      if (bytes.isEmpty())
+        continue;
+      QBuffer buffer(&bytes);
+      QImageReader reader(&buffer);
+      const QList<QByteArray> readers =
+          QImageReader::imageFormatsForMimeType(format.toLatin1());
+      if (!readers.isEmpty())
+        reader.setFormat(readers.first()); // also falls back to detection
+      image = reader.read();
+      if (!image.isNull()) {
+        type = format;
+        data = bytes;
+        break;
+      }
+    }
+    if (image.isNull() && mime->hasImage())
+      image = qvariant_cast<QImage>(mime->imageData());
+  }
+  if (image.isNull()) {
+    statusBar()->showMessage("No image on the clipboard", 3000);
+    return;
+  }
+
+  m_list.clear();
+  m_folder.clear();
+  m_imagePath.clear();
+  m_folderIndex = -1;
+  m_folderCount = 0;
+  m_pasted = true;
+  m_pastedType = type;
+  m_pastedData = data;
+  m_label->setPixmap(image); // keeps interpolation/invert/gamma settings
+  refreshInfoPanel();
+  updateWindowTitle();
+  statusBar()->showMessage(QString("Pasted %1 × %2 image%3")
+                               .arg(image.width())
+                               .arg(image.height())
+                               .arg(type.isEmpty() ? "" : " (" + type + ")"),
+                           3000);
+}
+
 // Every file in the image's folder that Qt has a reader for (by extension,
 // case-insensitively), in natural order so "frame2" sorts before "frame10".
 // Rescanned on each use, so files added or removed meanwhile are picked up.
@@ -730,6 +791,9 @@ QStringList ImageViewer::imageFilesIn(const QString &folder) {
 // images added to it later.
 void ImageViewer::openPath(const QString &path) {
   m_list.clear(); // back to browsing the folder
+  m_pasted = false;
+  m_pastedType.clear();
+  m_pastedData.clear();
   if (!QFileInfo(path).isDir()) {
     loadImage(path);
     return;
@@ -821,7 +885,8 @@ QString uniquePath(const QString &dir, const QString &stem) {
 
 // S saves what the image area shows (resampling and tone adjustments
 // applied, at display resolution) as a lossless PNG next to the image, or in
-// the Pictures folder if the image's folder isn't writable. Shift+S asks
+// the Pictures folder if the image's folder isn't writable or the image was
+// pasted. Shift+S asks
 // where to save. The PNG's text fields record the source and view settings.
 void ImageViewer::saveView(bool chooseLocation) {
   const QImage rendered = m_label->renderVisible();
@@ -857,13 +922,14 @@ void ImageViewer::saveView(bool chooseLocation) {
   const QRect region = m_label->visibleSourceRect().toAlignedRect();
 
   const QFileInfo source(m_imagePath);
-  QString dir = source.absolutePath();
-  if (!QFileInfo(dir).isWritable()) {
+  QString dir = m_pasted ? QString() : source.absolutePath();
+  if (dir.isEmpty() || !QFileInfo(dir).isWritable()) {
     dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     if (dir.isEmpty() || !QDir().mkpath(dir))
       dir = QDir::homePath();
   }
-  QString path = uniquePath(dir, source.completeBaseName() + "_view_" + tag);
+  const QString stem = m_pasted ? QString("clipboard") : source.completeBaseName();
+  QString path = uniquePath(dir, stem + "_view_" + tag);
 
   if (chooseLocation) {
     path = QFileDialog::getSaveFileName(
@@ -881,7 +947,7 @@ void ImageViewer::saveView(bool chooseLocation) {
                                   .arg(region.y())
                                   .arg(region.width())
                                   .arg(region.height());
-  shot.setText("Source", m_imagePath);
+  shot.setText("Source", m_pasted ? "clipboard" : m_imagePath);
   shot.setText("Description", description);
   shot.setText("Software", "imgview " + QCoreApplication::applicationVersion());
 
@@ -904,6 +970,9 @@ void ImageViewer::saveView(bool chooseLocation) {
 }
 
 void ImageViewer::loadImage(const QString &path) {
+  m_pasted = false;
+  m_pastedType.clear();
+  m_pastedData.clear();
   m_imagePath = QFileInfo(path).absoluteFilePath();
   m_folder = QFileInfo(m_imagePath).absolutePath();
   QPixmap pixmap(m_imagePath);
@@ -928,6 +997,11 @@ void ImageViewer::loadImage(const QString &path) {
 }
 
 void ImageViewer::showAdjacentImage(int delta) {
+  if (m_pasted) {
+    statusBar()->showMessage(
+        "No previous or next image for a pasted image (O opens a file)", 3000);
+    return;
+  }
   if (!m_list.isEmpty()) {
     showAdjacentInList(delta);
     return;
@@ -1034,8 +1108,14 @@ void ImageViewer::createInfoPanel() {
     form->addRow(new QLabel(QString("<b>%1</b>").arg(key)), valueLabel);
   };
 
-  QFileInfo fi(m_imagePath);
-  addRow("File size:", formatFileSize(fi.size()));
+  if (m_pasted) {
+    addRow("Source:", m_pastedType.isEmpty()
+                          ? QString("Clipboard")
+                          : QString("Clipboard (%1)").arg(m_pastedType));
+    addRow("Data size:", formatFileSize(m_pastedData.size()));
+  } else {
+    addRow("File size:", formatFileSize(QFileInfo(m_imagePath).size()));
+  }
 
   if (!m_label->originalSize().isEmpty()) {
     int w = m_label->originalSize().width();
@@ -1109,8 +1189,15 @@ void ImageViewer::createInfoPanel() {
     }
   };
 
-  if (!m_imagePath.isEmpty()) try { // nothing to read for an empty folder
-    auto image = Exiv2::ImageFactory::open(m_imagePath.toUtf8().constData());
+  // Nothing to read for an empty folder, or a pasted image without its
+  // encoded data.
+  if (!m_imagePath.isEmpty() || !m_pastedData.isEmpty()) try {
+    auto image =
+        m_pasted ? Exiv2::ImageFactory::open(
+                       reinterpret_cast<const Exiv2::byte *>(
+                           m_pastedData.constData()),
+                       m_pastedData.size())
+                 : Exiv2::ImageFactory::open(m_imagePath.toUtf8().constData());
     // .get(): open() returns std::auto_ptr in Exiv2 0.27 (no bool
     // conversion) and std::unique_ptr in 0.28.
     if (image.get()) {
@@ -1205,7 +1292,7 @@ void ImageViewer::toggleInterpolation() {
 // mode is shown because it changes what the pixels mean; three decimals so a
 // near-1 wheel zoom can't be mistaken for exactly 1:1.
 void ImageViewer::updateWindowTitle() {
-  if (m_folder.isEmpty()) { // nothing opened yet
+  if (m_folder.isEmpty() && !m_pasted) { // nothing opened yet
     setWindowTitle("Image Viewer");
     if (m_viewInfoLabel)
       m_viewInfoLabel->setText("No image open");
@@ -1225,8 +1312,14 @@ void ImageViewer::updateWindowTitle() {
                 .arg(m_label->isFitToWindow() ? "fit " : "")
                 .arg(m_label->currentScale(), 0, 'f', 3);
   }
-  QString file = m_imagePath.isEmpty() ? QDir(m_folder).dirName() + "/"
-                                       : QFileInfo(m_imagePath).fileName();
+  QString file;
+  if (m_pasted)
+    file = m_pastedType.isEmpty() ? QString("Clipboard")
+                                  : QString("Clipboard (%1)").arg(m_pastedType);
+  else if (m_imagePath.isEmpty())
+    file = QDir(m_folder).dirName() + "/";
+  else
+    file = QFileInfo(m_imagePath).fileName();
   if (m_folderIndex >= 0)
     file += QString(" (%1/%2)").arg(m_folderIndex + 1).arg(m_folderCount);
   setWindowTitle(QString("%1 – Image Viewer [%2]").arg(file, info));
@@ -1351,6 +1444,7 @@ void ImageViewer::updateHelpPanel() {
       {"", "Images", {}},
       {"← →", "Previous, next image (when it fits)", {}},
       {"o", "Open an image", {}},
+      {"Ctrl+V", "Paste an image (e.g. copied in a browser)", {}},
       {"s", "Save the view as PNG", {}},
       {"Shift+s", "Save the view as…", {}},
       {"", "Window", {}},
@@ -1405,6 +1499,10 @@ void ImageViewer::toggleInfoPanel() {
 // no matter which child has focus (e.g. after selecting text in the info
 // panel). Children that don't use a key pass it up to keyPressEvent().
 bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
+  if (event->matches(QKeySequence::Paste)) { // Ctrl+V, also Shift+Insert
+    pasteImage();
+    return true;
+  }
   switch (event->key()) {
   case Qt::Key_Escape:
     // Close help or leave fullscreen first rather than quitting.

@@ -21,7 +21,7 @@ may be an image file or a folder; for a folder, its first image is opened.
 The left and right arrow keys then step through the folder's images. With
 several paths, they step through just those images, in the order given (a
 folder among them contributes its images; missing and unreadable files are
-skipped). Without a path, a file picker opens.
+skipped). Without a path, the window opens with no image.
 .B iv
 is a short alias for
 .BR imgview .
@@ -78,9 +78,15 @@ Show or hide the info panel.
 .B o
 Open an image with a file picker.
 .TP
+.B Ctrl+V
+Paste an image from the clipboard, e.g. one copied in a web browser. It
+replaces the open image and is kept in memory only; the left and right
+arrow keys don't switch images until a file is opened.
+.TP
 .B s
 Save the image area as shown (zoom, inversion, gamma and saturation
-applied) as a PNG next to the image, or in the Pictures folder if that isn't writable. With
+applied) as a PNG next to the image, or in the Pictures folder if that isn't
+writable or the image was pasted. With
 Shift: choose where to save.
 .TP
 .B f

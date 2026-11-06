@@ -30,11 +30,13 @@ iv path/to/image.jpg        # short alias, installed alongside imgview
 imgview path/to/folder      # opens the folder's first image
 imgview a.png b.png c.png   # ←/→ step through just these files
 iv sol_04*/*.png            # ...or whatever a shell glob matches
-imgview                     # opens a file picker
+imgview                     # opens an empty window (O: open, Ctrl+V: paste)
 imgview --version           # also --help
 ```
 
-Started without a path (for example from the application menu, or by opening the app on macOS), imgview shows a file picker; press `O` to open another image at any time. On macOS, double-clicking an image or using **Open With** in Finder works too.
+Started without a path (for example from the application menu, or by opening the app on macOS), imgview opens with no image; press `O` to open one with a file picker, at any time. On macOS, double-clicking an image or using **Open With** in Finder works too.
+
+**Pasting:** `Ctrl` + `V` shows the image on the clipboard, such as one copied with **Copy Image** in a web browser, without saving it first. It replaces the open image and is kept in memory only. The clipboard's image types are tried in the order it offers them (browsers usually offer `image/png`), and the title and info panel show which one was used, e.g. `Clipboard (image/png)`; the info panel also shows the pasted data's size and any metadata in it. `←` / `→` do nothing for a pasted image, since it has no folder; open a file to browse again. Saving the view (`S`) puts it in the Pictures folder, as `clipboard_view_….png`. If the clipboard holds no image, the open image stays and the status bar says so.
 
 Given a folder, imgview opens its first image in the same natural order that `←` / `→` step through (only that folder, not subfolders); `←` / `→` then browse the rest. If the folder has no images, it says so, and `←` / `→` pick up any images added to it later.
 
@@ -67,6 +69,7 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | `?` | Show / hide the help panel |
 | `M` | Show / hide the info panel |
 | `O` | Open an image with a file picker |
+| `Ctrl` + `V` | Paste an image from the clipboard (e.g. copied in a web browser) |
 | `S` | Save the view as shown (PNG, next to the image) |
 | `Shift` + `S` | Save the view, choosing where |
 | `F` | Toggle fullscreen |
@@ -207,7 +210,7 @@ This installs, under `/usr/local` by default:
 - `share/licenses/imgview/LICENSE` – the license.
 - `share/applications/imgview.desktop` – a desktop entry, so file managers offer imgview under **Open With** for image files. It lists every image type handled by Qt's own image plugins (Qt GUI's built-in formats, Qt Image Formats and Qt SVG), whether or not those plugins are installed on your system: BMP, GIF, JPEG, PNG, PBM/PGM/PPM, XBM, XPM, ICO, SVG/SVGZ, ICNS, JPEG 2000 (JP2/JPX/JPM), TGA, TIFF, WBMP and WebP. Opening a type whose plugin is missing shows a "Failed to load image" message.
 
-Started from the application menu, it opens a file picker. Its `Exec` line uses the full install path, so it works for prefixes that aren't on your `PATH`.
+Started from the application menu, it opens with no image (`O` opens a file picker, `Ctrl` + `V` pastes an image). Its `Exec` line uses the full install path, so it works for prefixes that aren't on your `PATH`.
 
 To install just for your user instead:
 
@@ -305,7 +308,7 @@ If a build fails after tagging, fix it, then move the tag to the fixed commit (`
 ## Project layout
 
 ```
-src/main.cpp                    Entry point: options, file picker, macOS open events
+src/main.cpp                    Entry point: options, macOS open events
 src/ImageViewer.h/.cpp          Main window (info and help panels, keys, title, status bar)
                                 and the zoomable, pannable image view
 src/Resample.h/.cpp             Nearest, bicubic and Lanczos3 resamplers, tone adjustments (invert/gamma tables, saturation)

@@ -61,7 +61,8 @@ void setUpParser(QCommandLineParser &parser) {
       "paths",
       "Image files or folders to open. With several, the left/right arrow "
       "keys step through just those, in the order given; with one, through "
-      "its folder. Without any, a file picker opens.",
+      "its folder. Without any, the window opens empty: press O to open an "
+      "image, or Ctrl+V to paste one.",
       "[path...]");
 }
 
@@ -112,19 +113,5 @@ int main(int argc, char *argv[]) {
     viewer.openPaths(paths);
   };
   viewer.show();
-
-  if (args.isEmpty()) {
-    // Nothing given: offer a file picker. On macOS, wait a moment first, since
-    // a file opened from Finder arrives as an event just after launch.
-#ifdef Q_OS_MACOS
-    const int delayMs = 500;
-#else
-    const int delayMs = 0;
-#endif
-    QTimer::singleShot(delayMs, &viewer, [&viewer] {
-      if (!viewer.hasOpenedSomething())
-        viewer.showOpenDialog();
-    });
-  }
   return app.exec();
 }
