@@ -13,6 +13,7 @@ It was built for examining images such as Mars rover frames for artifacts like c
 - **Zoom and pan** – zoom with the mouse wheel around the pointer, or with the keyboard; drag with the mouse or use the arrow keys to move around a zoomed image.
 - **True-pixel zoom** – when zoomed in, every screen pixel is an unmodified copy of an image pixel (nearest neighbour). Smoother **bicubic** and sharper **Lanczos3** modes are also available.
 - **Single-pixel panning** – step the view by exactly one image pixel to walk across fine detail.
+- **Pixel values** (`P`) – rest the pointer on the image to see the position and stored value of the pixel under it, including the full values of 16-bit images.
 - **Folder browsing** – step to the previous or next image in the same folder, in natural order (`frame2` before `frame10`), keeping your view settings.
 - **color inversion** – turns a faint light streak on a dark background into a dark streak on a light one.
 - **Gamma adjustment** – step a gamma curve to stretch contrast in the bright or dark end of the image.
@@ -55,6 +56,7 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | Left-drag | Pan (when the image is larger than the window) |
 | `←` `↑` `→` `↓` | Pan by 10 % of the view (when the image view has focus) |
 | `Shift` + arrows | Pan by exactly one image pixel |
+| `P` | Toggle pixel value tooltips |
 | `←` / `→` (whole image fits in the view) | Previous / next image in the folder |
 | `I` | Cycle zoom-in resampling: **nearest** (true pixels, default) → **bicubic** (smooth) → **Lanczos3** (smooth, sharper) |
 | `N` | Toggle color inversion |
@@ -83,6 +85,8 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 All keys except the arrow keys work wherever keyboard focus is, including in the info panel (while you are typing in a metadata cell, keys go into the cell). The arrow keys pan only while the image has focus (click the image to give it focus), so they still move between cells in the metadata table.
 
 **Previous / next image:** `←` and `→` switch images when the whole image fits in the window (at fit-to-window, for example). When the image is wider than the window, they pan as usual. When it's only taller than the window (say a tall image at 1:1), they do nothing, so you can't jump to another image by accident while panning up and down. Press `0` to fit, then `←` / `→` to move on. The folder's list is every file Qt can read, matched by extension (case-insensitively), sorted naturally, and rescanned on every press, so files added or removed meanwhile are picked up. (With several paths given, it's that list instead; listed files deleted meanwhile are skipped.) It wraps around: `→` on the last image goes to the first and `←` on the first goes to the last, with a short message in the status bar when that happens. Interpolation mode, inversion, gamma and saturation stay as they are; zoom resets to fit; the info panel updates for the new file.
+
+**Pixel values:** with `P` on, resting the pointer on the image shows a tooltip with the position of the image pixel under it (from 0 at the top left) and its stored value, e.g. `x 512, y 300` and `RGB 12, 34, 56`, or `value 87` for a greyscale image, with `A` and the alpha value added for an image with transparency. Once it's shown, it follows the pointer from pixel to pixel. These are the values decoded from the file, before resampling and inversion, gamma or saturation. Images with more than 8 bits per channel, such as 16-bit PNG and TIFF, show their values on a 16-bit scale (0–65535), marked `(16-bit)`.
 
 ### Window title
 

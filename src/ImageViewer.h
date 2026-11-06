@@ -51,6 +51,7 @@ private:
   void stepGamma(int delta);
   void stepSaturation(int delta);
   void toggleSaturationMode();
+  void togglePixelTips();
   void resetTone();
   void toggleHelpPanel();
   void updateHelpPanel();
@@ -114,6 +115,11 @@ public:
   void setPixmap(const QImage &image);
 
   QSize originalSize() const { return m_original.size(); }
+
+  // Pixel value tooltips: while on, resting the pointer on the image shows
+  // the position and stored value of the image pixel under it.
+  bool pixelTips() const { return m_pixelTips; }
+  void setPixelTips(bool on);
   // Whether the image at the current zoom is wider or taller than the view.
   bool canPan() const;
 
@@ -186,9 +192,11 @@ protected:
   void mousePressEvent(QMouseEvent *event) override;
   void mouseMoveEvent(QMouseEvent *event) override;
   void mouseReleaseEvent(QMouseEvent *event) override;
+  bool event(QEvent *event) override; // pixel value tooltips
 
 private:
   void resetView();
+  QString pixelTipText(const QPoint &pixel) const;
   // Whether the view is drawn from the area-averaged downscale rather than
   // the selected resampler: at or below one image pixel per device pixel.
   bool isDownscaled() const;
@@ -204,6 +212,15 @@ private:
   // Kept as an ARGB32_Premultiplied QImage so the bicubic resampler can read
   // its pixels directly.
   QImage m_original;
+  // The image as decoded, for the pixel value tooltips, when m_original
+  // doesn't hold its exact values: deeper than 8 bits per channel, or with
+  // an alpha channel (translucent pixels lose precision when premultiplied).
+  // Otherwise null.
+  QImage m_source;
+  bool m_deep = false;     // more than 8 bits per channel
+  bool m_gray = false;     // all pixels grey
+  bool m_hasAlpha = false;
+  bool m_pixelTips = false;
   double m_zoomFactor = 1.0;
   bool m_manualZoom = false;
 

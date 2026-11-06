@@ -27,6 +27,7 @@
 #include <QScrollBar>
 #include <QStandardPaths>
 #include <QStatusBar>
+#include <QToolTip>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -176,15 +177,46 @@ void ScaledImageLabel::setPixmap(const QPixmap &pixmap) {
   setPixmap(pixmap.toImage());
 }
 
+namespace {
+// Formats with more than 8 bits per colour channel.
+bool isDeepFormat(QImage::Format format) {
+  switch (format) {
+  case QImage::Format_BGR30:
+  case QImage::Format_A2BGR30_Premultiplied:
+  case QImage::Format_RGB30:
+  case QImage::Format_A2RGB30_Premultiplied:
+  case QImage::Format_RGBX64:
+  case QImage::Format_RGBA64:
+  case QImage::Format_RGBA64_Premultiplied:
+  case QImage::Format_Grayscale16:
+  case QImage::Format_RGBX16FPx4:
+  case QImage::Format_RGBA16FPx4:
+  case QImage::Format_RGBA16FPx4_Premultiplied:
+  case QImage::Format_RGBX32FPx4:
+  case QImage::Format_RGBA32FPx4:
+  case QImage::Format_RGBA32FPx4_Premultiplied:
+    return true;
+  default:
+    return false;
+  }
+}
+} // namespace
+
 void ScaledImageLabel::setPixmap(const QImage &image) {
   QLabel::setText(QString()); // drop any earlier "Failed to load" message
   m_original = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+  m_deep = isDeepFormat(image.format());
+  m_hasAlpha = image.hasAlphaChannel();
+  m_gray = image.isGrayscale(); // scans 32-bit images, stopping at a colour
+  m_source = m_deep || m_hasAlpha ? image : QImage();
   m_viewportCache = QImage();
   resetView();
 }
 
 void ScaledImageLabel::clearImage() {
   m_original = QImage();
+  m_source = QImage();
+  m_deep = m_gray = m_hasAlpha = false;
   m_viewportCache = QImage();
   m_adjustedCache = QImage();
   resetView();
@@ -411,6 +443,63 @@ QImage ScaledImageLabel::renderVisible() {
   }
   shot.setDevicePixelRatio(1.0);
   return shot;
+}
+
+void ScaledImageLabel::setPixelTips(bool on) {
+  m_pixelTips = on;
+  if (!on)
+    QToolTip::hideText();
+}
+
+// e.g. "x 512, y 300" over "RGB 12, 34, 56", "value 87" for a grey image,
+// with "A 77" added for an image with alpha. The values are those decoded
+// from the file, before resampling and tone adjustments; a deeper image
+// shows 16-bit values.
+QString ScaledImageLabel::pixelTipText(const QPoint &pixel) const {
+  QRgba64 c;
+  if (!m_source.isNull())
+    c = m_source.pixelColor(pixel).rgba64();
+  else // opaque and 8-bit: premultiplying left the values as they were
+    c = QRgba64::fromArgb32(m_original.pixel(pixel));
+  auto value = [this](quint16 v16, quint8 v8) {
+    return QString::number(m_deep ? v16 : v8);
+  };
+  QString text = QString("x %1, y %2\n").arg(pixel.x()).arg(pixel.y());
+  if (m_gray)
+    text += "value " + value(c.red(), c.red8());
+  else
+    text += QString("RGB %1, %2, %3")
+                .arg(value(c.red(), c.red8()), value(c.green(), c.green8()),
+                     value(c.blue(), c.blue8()));
+  if (m_hasAlpha)
+    text += "  A " + value(c.alpha(), c.alpha8());
+  if (m_deep)
+    text += " (16-bit)";
+  return text;
+}
+
+// Qt sends a ToolTip event once the pointer has rested for the platform's
+// hover delay. The tip is tied to the screen area of the pixel it describes,
+// so it closes when the pointer moves off that pixel; while a tip is up, Qt
+// shows the next one with almost no delay, so it then follows the pointer.
+// A key press closes it, so panning or zooming can't leave a stale value.
+bool ScaledImageLabel::event(QEvent *event) {
+  if (event->type() != QEvent::ToolTip || !m_pixelTips)
+    return QLabel::event(event);
+  const auto *help = static_cast<QHelpEvent *>(event);
+  const double scale = currentScale();
+  const QPointF p = (QPointF(help->pos()) - m_offset) / scale;
+  const QPoint pixel(int(std::floor(p.x())), int(std::floor(p.y())));
+  if (m_original.isNull() || m_dragging || !m_original.rect().contains(pixel)) {
+    QToolTip::hideText();
+    return true;
+  }
+  const QRect area = QRectF(m_offset + QPointF(pixel) * scale,
+                            QSizeF(scale, scale))
+                         .toAlignedRect()
+                         .intersected(rect());
+  QToolTip::showText(help->globalPos(), pixelTipText(pixel), this, area);
+  return true;
 }
 
 void ScaledImageLabel::resizeEvent(QResizeEvent *event) {
@@ -975,12 +1064,14 @@ void ImageViewer::loadImage(const QString &path) {
   m_pastedData.clear();
   m_imagePath = QFileInfo(path).absoluteFilePath();
   m_folder = QFileInfo(m_imagePath).absolutePath();
-  QPixmap pixmap(m_imagePath);
-  if (pixmap.isNull()) {
+  // A QImage rather than a QPixmap, so a 16-bit image keeps its stored
+  // values for the pixel value tooltips.
+  const QImage image(m_imagePath);
+  if (image.isNull()) {
     m_label->clearImage();
     m_label->setText(QString("Failed to load image:\n%1").arg(m_imagePath));
   } else {
-    m_label->setPixmap(pixmap); // keeps interpolation/invert/gamma settings
+    m_label->setPixmap(image); // keeps interpolation/invert/gamma settings
   }
 
   if (!m_list.isEmpty()) {
@@ -1377,6 +1468,17 @@ void ImageViewer::toggleSaturationMode() {
       kSettingMessageMs);
 }
 
+// P: while on, resting the pointer on the image shows the stored value of
+// the pixel under it in a tooltip.
+void ImageViewer::togglePixelTips() {
+  m_label->setPixelTips(!m_label->pixelTips());
+  updateHelpPanel();
+  statusBar()->showMessage(m_label->pixelTips()
+                               ? "Pixel values: rest the pointer on a pixel"
+                               : "Pixel values off",
+                           kSettingMessageMs);
+}
+
 // Backspace: undo every tone adjustment at once, so none is left on by
 // accident. Zoom and resampling mode are left as they are.
 void ImageViewer::resetTone() {
@@ -1428,6 +1530,7 @@ void ImageViewer::updateHelpPanel() {
       {"r", "Zoom to 1:1", {}},
       {"← ↑ → ↓", "Pan; drag also pans", {}},
       {"Shift+arrows", "Pan by one image pixel", {}},
+      {"p", "Pixel value tooltip on hover", m_label->pixelTips() ? "on" : "off"},
       {"i", "Zoom-in resampling: nearest, bicubic, lanczos3",
        ScaledImageLabel::interpolationName(m_label->interpolation())},
       {"", "Tone", {}},
@@ -1562,6 +1665,9 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
     return true;
   case Qt::Key_B:
     toggleSaturationMode();
+    return true;
+  case Qt::Key_P:
+    togglePixelTips();
     return true;
   case Qt::Key_R: {
     // Actual size, centred on the pointer if it's over the image.
