@@ -650,9 +650,9 @@ ImageViewer::ImageViewer(const QString &path, QWidget *parent)
   // (',' and '-' are keys themselves). A minimum width of 1 lets the window
   // shrink below the text width; the text is then clipped.
   QLabel *hintLabel = new QLabel(
-      QStringLiteral("help: ?  |  zoom: - + 0 r  |  pan: ← ↑ → ↓  |  "
-                     "prev/next: ← →  |  interp: i  |  invert: n  |  info: m  |  "
-                     "open: o  |  paste: ctrl+v  |  fullscreen: f  |  quit: q"),
+      QStringLiteral("help: ?  |  open: o  |  paste: ctrl+v  |  info: m  |  "
+                     "quit: q  |  zoom: - + 0 r  |  pan: ← ↑ → ↓  |  "
+                     "prev/next: ← →  |  fullscreen: f"),
       this);
   hintLabel->setMinimumWidth(1);
   hintLabel->setContentsMargins(6, 0, 0, 0);
