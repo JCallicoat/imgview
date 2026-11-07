@@ -50,6 +50,7 @@ private:
   void toggleInverted();
   void stepGamma(int delta);
   void stepSaturation(int delta);
+  void stepStretch(int delta);
   void toggleSaturationMode();
   void togglePixelTips();
   void resetTone();
@@ -149,6 +150,19 @@ public:
   Interpolation interpolation() const { return m_interpolation; }
   void setInterpolation(Interpolation mode);
 
+  // Linked contrast stretch (see applyStretch()), applied to the image
+  // before resampling, so a deeper image is stretched at full precision.
+  // Step 0 is off; steps 1 to kMaxStretchStep clip increasing percentages
+  // of the values at each end, starting at 0 % (darkest value to black,
+  // brightest to white).
+  static constexpr int kMaxStretchStep = 6;
+  int stretchStep() const { return m_stretchStep; }
+  void setStretchStep(int step);
+  double stretchClipPercent() const;
+  // The black and white points in use, on the 16-bit scale.
+  StretchRange stretchRange() const { return m_stretchRange; }
+  bool isDeep() const { return m_deep; } // more than 8 bits per channel
+
   // Display tone adjustments, applied after resampling: a saturation
   // change, optional colour inversion, then a gamma curve.
   bool isInverted() const { return m_inverted; }
@@ -196,6 +210,7 @@ protected:
 
 private:
   void resetView();
+  void updateProcessed();
   QString pixelTipText(const QPoint &pixel) const;
   // Whether the view is drawn from the area-averaged downscale rather than
   // the selected resampler: at or below one image pixel per device pixel.
@@ -209,14 +224,19 @@ private:
   void panBy(const QPointF &delta);
   const QImage &forDisplay(const QImage &rendered);
 
-  // Kept as an ARGB32_Premultiplied QImage so the bicubic resampler can read
-  // its pixels directly.
+  // The image as shown before resampling: m_source with the contrast
+  // stretch applied, if on. Kept as an ARGB32_Premultiplied QImage so the
+  // bicubic resampler can read its pixels directly.
   QImage m_original;
-  // The image as decoded, for the pixel value tooltips, when m_original
-  // doesn't hold its exact values: deeper than 8 bits per channel, or with
-  // an alpha channel (translucent pixels lose precision when premultiplied).
-  // Otherwise null.
+  // The image with its stored values, for the stretch and the pixel value
+  // tooltips: as decoded if it's deeper than 8 bits per channel or has an
+  // alpha channel (translucent pixels lose precision when premultiplied),
+  // otherwise converted to ARGB32_Premultiplied, which keeps the values, and
+  // then sharing its data with an unstretched m_original.
   QImage m_source;
+  int m_stretchStep = 0;
+  StretchHistogram m_stretchHistogram; // of m_source; empty until needed
+  StretchRange m_stretchRange;
   bool m_deep = false;     // more than 8 bits per channel
   bool m_gray = false;     // all pixels grey
   bool m_hasAlpha = false;

@@ -12,8 +12,8 @@ imgview, iv \- image viewer for close inspection of pixels and metadata
 .SH DESCRIPTION
 .B imgview
 shows an image scaled to the window. When zoomed in it shows the stored
-pixel values unmodified (nearest neighbour) by default, and it can invert
-colors and adjust gamma and saturation to make faint features easier to
+pixel values unmodified (nearest neighbour) by default, and it can stretch
+contrast, invert colors and adjust gamma and saturation to make faint features easier to
 spot. An info panel shows the file size, dimensions and EXIF, XMP and IPTC metadata.
 .PP
 .I path
@@ -70,8 +70,14 @@ saturation down (by 10%, down to grey), reset saturation to 100%.
 Switch saturation between linear (every color changed alike) and vibrance
 (muted colors changed more than vivid ones).
 .TP
+.B x c v
+Contrast stretch less, more, off. The darkest and brightest values (with
+0, 0.1, 0.5, 1, 2 or 5% of the values clipped at each end) become black
+and white, for all colour channels together; 16-bit images are stretched at
+full precision.
+.TP
 .B Backspace
-Reset inversion, gamma and saturation.
+Reset stretch, inversion, gamma and saturation.
 .TP
 .B ?
 Show or hide the help panel, which lists every key and the current view

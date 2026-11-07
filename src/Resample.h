@@ -2,6 +2,7 @@
 
 #include <QImage>
 #include <array>
+#include <vector>
 #include <QPointF>
 #include <QSize>
 
@@ -63,3 +64,31 @@ enum class SaturationMode {
 // `img` must be Format_ARGB32_Premultiplied.
 void applyTone(QImage &img, const ToneLut &lut, double saturation,
                SaturationMode mode);
+
+// Whether `format` has more than 8 bits per colour channel.
+bool isDeepFormat(QImage::Format format);
+
+// Linked contrast stretch: one black point and one white point for all
+// colour channels, so hues are kept. Values are handled on a 16-bit scale
+// (0-65535; an 8-bit value v counts as v * 257), so the stretch of a deeper
+// image uses its full precision.
+
+// Histogram of the R, G and B values of `img` pooled, on the 16-bit scale.
+// Fully transparent pixels aren't counted.
+using StretchHistogram = std::vector<quint64>;
+StretchHistogram stretchHistogram(const QImage &img);
+
+// The black and white points that clip `clipPercent` % of the histogram's
+// values at each end; with 0, the lowest and highest values present.
+// Always black < white: an image of a single value gets the full range.
+struct StretchRange {
+  int black = 0;
+  int white = 65535;
+};
+StretchRange findStretchRange(const StretchHistogram &hist,
+                              double clipPercent);
+
+// `img` with its colour channels mapped linearly from [black, white] to
+// [0, 255], clamped outside it, alpha unchanged. Returns
+// Format_ARGB32_Premultiplied.
+QImage applyStretch(const QImage &img, const StretchRange &range);

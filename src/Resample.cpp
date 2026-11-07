@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -286,4 +287,155 @@ void applyTone(QImage &img, const ToneLut &lut, double saturation,
       }
     }
   });
+}
+
+bool isDeepFormat(QImage::Format format) {
+  switch (format) {
+  case QImage::Format_BGR30:
+  case QImage::Format_A2BGR30_Premultiplied:
+  case QImage::Format_RGB30:
+  case QImage::Format_A2RGB30_Premultiplied:
+  case QImage::Format_RGBX64:
+  case QImage::Format_RGBA64:
+  case QImage::Format_RGBA64_Premultiplied:
+  case QImage::Format_Grayscale16:
+  case QImage::Format_RGBX16FPx4:
+  case QImage::Format_RGBA16FPx4:
+  case QImage::Format_RGBA16FPx4_Premultiplied:
+  case QImage::Format_RGBX32FPx4:
+  case QImage::Format_RGBA32FPx4:
+  case QImage::Format_RGBA32FPx4_Premultiplied:
+    return true;
+  default:
+    return false;
+  }
+}
+
+namespace {
+// `img` in a format the stretch code reads directly, without losing
+// precision: RGBA64 for a deep image, else (A)RGB32, possibly premultiplied.
+QImage stretchInput(const QImage &img) {
+  if (isDeepFormat(img.format()))
+    return img.convertToFormat(QImage::Format_RGBA64);
+  switch (img.format()) {
+  case QImage::Format_RGB32:
+  case QImage::Format_ARGB32:
+  case QImage::Format_ARGB32_Premultiplied:
+    return img;
+  default:
+    return img.convertToFormat(QImage::Format_ARGB32);
+  }
+}
+
+// Calls fn(r, g, b, a) for each pixel of rows [b, e) of `src` (from
+// stretchInput()), with straight (not premultiplied) values: 16-bit for
+// RGBA64, else 8-bit.
+template <typename Fn>
+void forEachPixel(const QImage &src, int b, int e, Fn fn) {
+  const int w = src.width();
+  if (src.format() == QImage::Format_RGBA64) {
+    for (int y = b; y < e; ++y) {
+      const auto *line = reinterpret_cast<const QRgba64 *>(src.constScanLine(y));
+      for (int x = 0; x < w; ++x)
+        fn(line[x].red(), line[x].green(), line[x].blue(), line[x].alpha());
+    }
+    return;
+  }
+  const bool premultiplied =
+      src.format() == QImage::Format_ARGB32_Premultiplied;
+  for (int y = b; y < e; ++y) {
+    const auto *line = reinterpret_cast<const QRgb *>(src.constScanLine(y));
+    for (int x = 0; x < w; ++x) {
+      const QRgb p = premultiplied ? qUnpremultiply(line[x]) : line[x];
+      fn(uint(qRed(p)), uint(qGreen(p)), uint(qBlue(p)), uint(qAlpha(p)));
+    }
+  }
+}
+} // namespace
+
+StretchHistogram stretchHistogram(const QImage &img) {
+  StretchHistogram hist(65536, 0);
+  const QImage src = stretchInput(img);
+  if (src.isNull())
+    return hist;
+  const uint scale = src.format() == QImage::Format_RGBA64 ? 1 : 257;
+  std::mutex mutex;
+  parallelRows(src.height(), [&](int b, int e) {
+    StretchHistogram local(65536, 0);
+    forEachPixel(src, b, e, [&](uint r, uint g, uint bl, uint a) {
+      if (a == 0)
+        return;
+      ++local[r * scale];
+      ++local[g * scale];
+      ++local[bl * scale];
+    });
+    const std::lock_guard<std::mutex> lock(mutex);
+    for (int v = 0; v < 65536; ++v)
+      hist[v] += local[v];
+  });
+  return hist;
+}
+
+StretchRange findStretchRange(const StretchHistogram &hist,
+                              double clipPercent) {
+  quint64 total = 0;
+  for (quint64 n : hist)
+    total += n;
+  if (total == 0)
+    return {};
+  // The first value from each end at which more than `clip` values have
+  // been passed.
+  const double clip = double(total) * clipPercent / 100.0;
+  StretchRange range;
+  quint64 count = 0;
+  for (int v = 0; v < 65536; ++v) {
+    count += hist[v];
+    if (double(count) > clip) {
+      range.black = v;
+      break;
+    }
+  }
+  count = 0;
+  for (int v = 65535; v >= 0; --v) {
+    count += hist[v];
+    if (double(count) > clip) {
+      range.white = v;
+      break;
+    }
+  }
+  if (range.white <= range.black)
+    return {};
+  return range;
+}
+
+QImage applyStretch(const QImage &img, const StretchRange &range) {
+  const QImage src = stretchInput(img);
+  if (src.isNull())
+    return {};
+  // Output value for each input value, on the input's scale.
+  const bool deep = src.format() == QImage::Format_RGBA64;
+  std::vector<quint8> lut(deep ? 65536 : 256);
+  const double span = range.white - range.black;
+  for (size_t v = 0; v < lut.size(); ++v) {
+    const double v16 = deep ? double(v) : v * 257.0;
+    lut[v] = quint8(std::clamp(
+        std::lround((v16 - range.black) * 255.0 / span), 0L, 255L));
+  }
+  QImage out(src.size(), QImage::Format_ARGB32_Premultiplied);
+  if (out.isNull())
+    return {};
+  uchar *const bits = out.bits();
+  const qsizetype bpl = out.bytesPerLine();
+  const int w = src.width();
+  parallelRows(src.height(), [&](int b, int e) {
+    for (int y = b; y < e; ++y) {
+      QRgb *line = reinterpret_cast<QRgb *>(bits + y * bpl);
+      int x = 0;
+      forEachPixel(src, y, y + 1, [&](uint r, uint g, uint bl, uint a) {
+        const uint a8 = deep ? (a + 128) / 257 : a;
+        line[x++] = qPremultiply(qRgba(lut[r], lut[g], lut[bl], int(a8)));
+      });
+    }
+  });
+  return out;
 }

@@ -177,45 +177,58 @@ void ScaledImageLabel::setPixmap(const QPixmap &pixmap) {
   setPixmap(pixmap.toImage());
 }
 
-namespace {
-// Formats with more than 8 bits per colour channel.
-bool isDeepFormat(QImage::Format format) {
-  switch (format) {
-  case QImage::Format_BGR30:
-  case QImage::Format_A2BGR30_Premultiplied:
-  case QImage::Format_RGB30:
-  case QImage::Format_A2RGB30_Premultiplied:
-  case QImage::Format_RGBX64:
-  case QImage::Format_RGBA64:
-  case QImage::Format_RGBA64_Premultiplied:
-  case QImage::Format_Grayscale16:
-  case QImage::Format_RGBX16FPx4:
-  case QImage::Format_RGBA16FPx4:
-  case QImage::Format_RGBA16FPx4_Premultiplied:
-  case QImage::Format_RGBX32FPx4:
-  case QImage::Format_RGBA32FPx4:
-  case QImage::Format_RGBA32FPx4_Premultiplied:
-    return true;
-  default:
-    return false;
-  }
-}
-} // namespace
-
 void ScaledImageLabel::setPixmap(const QImage &image) {
   QLabel::setText(QString()); // drop any earlier "Failed to load" message
-  m_original = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
   m_deep = isDeepFormat(image.format());
   m_hasAlpha = image.hasAlphaChannel();
   m_gray = image.isGrayscale(); // scans 32-bit images, stopping at a colour
-  m_source = m_deep || m_hasAlpha ? image : QImage();
+  m_source = m_deep || m_hasAlpha
+                 ? image
+                 : image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+  m_stretchHistogram.clear();
+  updateProcessed();
   m_viewportCache = QImage();
   resetView();
+}
+
+// Rebuild m_original from m_source for the current stretch setting.
+void ScaledImageLabel::updateProcessed() {
+  m_stretchRange = StretchRange();
+  if (m_source.isNull()) {
+    m_original = QImage();
+  } else if (m_stretchStep == 0) {
+    m_original = m_source.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+  } else {
+    if (m_stretchHistogram.empty())
+      m_stretchHistogram = stretchHistogram(m_source);
+    m_stretchRange = findStretchRange(m_stretchHistogram, stretchClipPercent());
+    m_original = applyStretch(m_source, m_stretchRange);
+  }
+}
+
+double ScaledImageLabel::stretchClipPercent() const {
+  static constexpr double kClipPercent[kMaxStretchStep] = {0,   0.1, 0.5,
+                                                           1.0, 2.0, 5.0};
+  return m_stretchStep > 0 ? kClipPercent[m_stretchStep - 1] : 0.0;
+}
+
+void ScaledImageLabel::setStretchStep(int step) {
+  step = qBound(0, step, kMaxStretchStep);
+  if (step == m_stretchStep)
+    return;
+  m_stretchStep = step;
+  updateProcessed();
+  m_scaledCache = QImage();
+  m_viewportCache = QImage();
+  update();
+  emit viewChanged();
 }
 
 void ScaledImageLabel::clearImage() {
   m_original = QImage();
   m_source = QImage();
+  m_stretchHistogram.clear();
+  m_stretchRange = StretchRange();
   m_deep = m_gray = m_hasAlpha = false;
   m_viewportCache = QImage();
   m_adjustedCache = QImage();
@@ -453,14 +466,11 @@ void ScaledImageLabel::setPixelTips(bool on) {
 
 // e.g. "x 512, y 300" over "RGB 12, 34, 56", "value 87" for a grey image,
 // with "A 77" added for an image with alpha. The values are those decoded
-// from the file, before resampling and tone adjustments; a deeper image
+// from the file, before the contrast stretch, resampling and tone
+// adjustments; a deeper image
 // shows 16-bit values.
 QString ScaledImageLabel::pixelTipText(const QPoint &pixel) const {
-  QRgba64 c;
-  if (!m_source.isNull())
-    c = m_source.pixelColor(pixel).rgba64();
-  else // opaque and 8-bit: premultiplying left the values as they were
-    c = QRgba64::fromArgb32(m_original.pixel(pixel));
+  const QRgba64 c = m_source.pixelColor(pixel).rgba64();
   auto value = [this](quint16 v16, quint8 v8) {
     return QString::number(m_deep ? v16 : v8);
   };
@@ -993,6 +1003,11 @@ void ImageViewer::saveView(bool chooseLocation) {
   QString tag = "x" + zoom + "_" + mode;
   QString settings = QString("%1, %2x%3").arg(
       mode, zoom, m_label->isFitToWindow() ? " (fit)" : "");
+  if (m_label->stretchStep() != 0) {
+    const QString clip = QString::number(m_label->stretchClipPercent());
+    tag += "_st" + clip;
+    settings += ", stretch " + clip + "%";
+  }
   if (m_label->isInverted()) {
     tag += "_inv";
     settings += ", inverted";
@@ -1390,6 +1405,8 @@ void ImageViewer::updateWindowTitle() {
     return;
   }
   QString info = m_label->resamplingName();
+  if (m_label->stretchStep() != 0)
+    info += QString(", stretch %1%").arg(m_label->stretchClipPercent());
   if (m_label->isInverted())
     info += ", inverted";
   if (m_label->gammaStep() != 0)
@@ -1454,6 +1471,28 @@ void ImageViewer::stepSaturation(int delta) {
   statusBar()->showMessage(message, kSettingMessageMs);
 }
 
+// X / C: less / more contrast stretch. The message gives the black and
+// white points, in the image's own values (16-bit for a deeper image).
+void ImageViewer::stepStretch(int delta) {
+  const int before = m_label->stretchStep();
+  m_label->setStretchStep(before + delta);
+  if (m_label->stretchStep() == 0) {
+    statusBar()->showMessage("Contrast stretch off", kSettingMessageMs);
+    return;
+  }
+  const StretchRange range = m_label->stretchRange();
+  const bool deep = m_label->isDeep();
+  QString message =
+      QString("Contrast stretch %1%: %2–%3%4 → 0–255")
+          .arg(m_label->stretchClipPercent())
+          .arg(deep ? range.black : range.black / 257)
+          .arg(deep ? range.white : range.white / 257)
+          .arg(deep ? " (16-bit)" : "");
+  if (m_label->stretchStep() == before && delta > 0)
+    message += " (maximum)";
+  statusBar()->showMessage(message, kSettingMessageMs);
+}
+
 // B switches how the saturation factor is applied: the same to every pixel,
 // or weighted towards muted pixels (vibrance). The amount is kept.
 void ImageViewer::toggleSaturationMode() {
@@ -1482,10 +1521,11 @@ void ImageViewer::togglePixelTips() {
 // Backspace: undo every tone adjustment at once, so none is left on by
 // accident. Zoom and resampling mode are left as they are.
 void ImageViewer::resetTone() {
+  m_label->setStretchStep(0);
   m_label->setInverted(false);
   m_label->setGammaStep(0);
   m_label->setSaturationStep(0);
-  statusBar()->showMessage("Inversion, gamma and saturation reset",
+  statusBar()->showMessage("Stretch, inversion, gamma and saturation reset",
                            kSettingMessageMs);
 }
 
@@ -1534,6 +1574,11 @@ void ImageViewer::updateHelpPanel() {
       {"i", "Zoom-in resampling: nearest, bicubic, lanczos3",
        ScaledImageLabel::interpolationName(m_label->interpolation())},
       {"", "Tone", {}},
+      {"x  c", "Contrast stretch less, more (% clipped)",
+       m_label->stretchStep() == 0
+           ? QString("off")
+           : QString("%1%").arg(m_label->stretchClipPercent())},
+      {"v", "Contrast stretch off", {}},
       {"n", "Invert colors", m_label->isInverted() ? "on" : "off"},
       {".  ,", "Gamma up (darker), down", QString::number(m_label->gamma(), 'f', 2)},
       {"/", "Reset gamma", {}},
@@ -1543,7 +1588,7 @@ void ImageViewer::updateHelpPanel() {
       {"b", "Saturation mode: linear, vibrance",
        m_label->saturationMode() == SaturationMode::Vibrance ? "vibrance"
                                                               : "linear"},
-      {"Backspace", "Reset inversion, gamma, saturation", {}},
+      {"Backspace", "Reset stretch, inversion, gamma, saturation", {}},
       {"", "Images", {}},
       {"← →", "Previous, next image (when it fits)", {}},
       {"o", "Open an image", {}},
@@ -1665,6 +1710,20 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
     return true;
   case Qt::Key_B:
     toggleSaturationMode();
+    return true;
+  // Not with Ctrl, so Ctrl+C / Ctrl+X still copy and cut, e.g. in the
+  // metadata table. (Ctrl+V is handled above.)
+  case Qt::Key_X:
+  case Qt::Key_C:
+  case Qt::Key_V:
+    if (event->modifiers() & Qt::ControlModifier)
+      return false;
+    if (event->key() == Qt::Key_V) {
+      m_label->setStretchStep(0);
+      statusBar()->showMessage("Contrast stretch off", kSettingMessageMs);
+    } else {
+      stepStretch(event->key() == Qt::Key_C ? 1 : -1);
+    }
     return true;
   case Qt::Key_P:
     togglePixelTips();

@@ -2,7 +2,7 @@
 
 A small, fast image viewer for **close inspection of pixels and metadata**, written in C++17 with **Qt 6 Widgets** (no QML) and **Exiv2**.
 
-It was built for examining images such as Mars rover frames for artifacts like cosmic-ray hits, so by default it shows the image's stored pixel values as they are when zoomed in, and adds a few display-only tools (color inversion, gamma, saturation) that make faint features easier to spot without changing the file.
+It was built for examining images such as Mars rover frames for artifacts like cosmic-ray hits, so by default it shows the image's stored pixel values as they are when zoomed in, and adds a few display-only tools (contrast stretch, color inversion, gamma, saturation) that make faint features easier to spot without changing the file.
 
 ![imgview showing a photo of the Moon at 1600 % saturation, with the info panel listing its EXIF and XMP metadata](docs/screenshot.png)
 
@@ -15,6 +15,7 @@ It was built for examining images such as Mars rover frames for artifacts like c
 - **Single-pixel panning** – step the view by exactly one image pixel to walk across fine detail.
 - **Pixel values** (`P`) – rest the pointer on the image to see the position and stored value of the pixel under it, including the full values of 16-bit images.
 - **Folder browsing** – step to the previous or next image in the same folder, in natural order (`frame2` before `frame10`), keeping your view settings.
+- **Contrast stretch** – spread the image's actual range of values over the full black-to-white range, clipping a chosen percentage at each end. 16-bit images are stretched from their full data, so a 12-bit frame that looks nearly black shows all its levels.
 - **color inversion** – turns a faint light streak on a dark background into a dark streak on a light one.
 - **Gamma adjustment** – step a gamma curve to stretch contrast in the bright or dark end of the image.
 - **Saturation adjustment** – boost color saturation up to 16× to make faint color differences stand out (such as mineral colors on the Moon), or reduce it down to greyscale. A **vibrance** mode boosts muted colors more than vivid ones.
@@ -67,7 +68,9 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | `L` | Saturation down: towards grey, down to 0 % |
 | `'` | Reset saturation to 100 % |
 | `B` | Switch saturation between **linear** (default) and **vibrance** |
-| `Backspace` | Reset inversion, gamma and saturation at once |
+| `X` / `C` | Contrast stretch less / more: off → 0 % → 0.1 % → 0.5 % → 1 % → 2 % → 5 % clipped |
+| `V` | Contrast stretch off |
+| `Backspace` | Reset stretch, inversion, gamma and saturation at once |
 | `?` | Show / hide the help panel |
 | `M` | Show / hide the info panel |
 | `O` | Open an image with a file picker |
@@ -78,15 +81,15 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | `Esc` | Close the help panel, or leave fullscreen, or quit |
 | `Q` | Quit |
 
-**Help panel:** `?` opens a panel on the left listing every key, with the current resampling mode, inversion, gamma and saturation beside their keys. All keys keep working while it's open, so you can try a key and watch its effect; `?` or `Esc` closes it.
+**Help panel:** `?` opens a panel on the left listing every key, with the current resampling mode, stretch, inversion, gamma and saturation beside their keys. All keys keep working while it's open, so you can try a key and watch its effect; `?` or `Esc` closes it.
 
 **Status bar:** hints for the most used keys (cut off from the right when the window is narrow, so `help: ?` stays visible); in fullscreen, the title's file and view info on the right (see below). Changing a view setting shows the new value there for two seconds, e.g. `Saturation 336%`, or `Gamma 8.00 (maximum)` at a limit.
 
 All keys except the arrow keys work wherever keyboard focus is, including in the info panel (while you are typing in a metadata cell, keys go into the cell). The arrow keys pan only while the image has focus (click the image to give it focus), so they still move between cells in the metadata table.
 
-**Previous / next image:** `←` and `→` switch images when the whole image fits in the window (at fit-to-window, for example). When the image is wider than the window, they pan as usual. When it's only taller than the window (say a tall image at 1:1), they do nothing, so you can't jump to another image by accident while panning up and down. Press `0` to fit, then `←` / `→` to move on. The folder's list is every file Qt can read, matched by extension (case-insensitively), sorted naturally, and rescanned on every press, so files added or removed meanwhile are picked up. (With several paths given, it's that list instead; listed files deleted meanwhile are skipped.) It wraps around: `→` on the last image goes to the first and `←` on the first goes to the last, with a short message in the status bar when that happens. Interpolation mode, inversion, gamma and saturation stay as they are; zoom resets to fit; the info panel updates for the new file.
+**Previous / next image:** `←` and `→` switch images when the whole image fits in the window (at fit-to-window, for example). When the image is wider than the window, they pan as usual. When it's only taller than the window (say a tall image at 1:1), they do nothing, so you can't jump to another image by accident while panning up and down. Press `0` to fit, then `←` / `→` to move on. The folder's list is every file Qt can read, matched by extension (case-insensitively), sorted naturally, and rescanned on every press, so files added or removed meanwhile are picked up. (With several paths given, it's that list instead; listed files deleted meanwhile are skipped.) It wraps around: `→` on the last image goes to the first and `←` on the first goes to the last, with a short message in the status bar when that happens. Interpolation mode, stretch, inversion, gamma and saturation stay as they are (a stretch is worked out afresh for each image); zoom resets to fit; the info panel updates for the new file.
 
-**Pixel values:** with `P` on, resting the pointer on the image shows a tooltip with the position of the image pixel under it (from 0 at the top left) and its stored value, e.g. `x 512, y 300` and `RGB 12, 34, 56`, or `value 87` for a greyscale image, with `A` and the alpha value added for an image with transparency. Once it's shown, it follows the pointer from pixel to pixel. These are the values decoded from the file, before resampling and inversion, gamma or saturation. Images with more than 8 bits per channel, such as 16-bit PNG and TIFF, show their values on a 16-bit scale (0–65535), marked `(16-bit)`.
+**Pixel values:** with `P` on, resting the pointer on the image shows a tooltip with the position of the image pixel under it (from 0 at the top left) and its stored value, e.g. `x 512, y 300` and `RGB 12, 34, 56`, or `value 87` for a greyscale image, with `A` and the alpha value added for an image with transparency. Once it's shown, it follows the pointer from pixel to pixel. These are the values decoded from the file, before the contrast stretch, resampling and inversion, gamma or saturation. Images with more than 8 bits per channel, such as 16-bit PNG and TIFF, show their values on a 16-bit scale (0–65535), marked `(16-bit)`.
 
 ### Window title
 
@@ -94,10 +97,11 @@ The title shows the file, its position in the folder, and the current view setti
 
 ```
 frame_0012.png (12/48) – Image Viewer [nearest, inverted, γ 1.68, sat 60%, 3.138×]
-frame_0013.png (13/48) – Image Viewer [area, fit 0.421×]
+frame_0013.png (13/48) – Image Viewer [area, stretch 0.5%, fit 0.421×]
 ```
 
 - **nearest / bicubic / lanczos3 / area** – the resampling actually applied: the selected mode when zoomed in, `area` when zoomed out (where every mode uses the same area-averaging downscale). The help panel (`?`) shows the selected mode.
+- **stretch** – shown with its clip percentage when the contrast stretch is on.
 - **inverted** – shown when color inversion is on.
 - **γ** – shown when gamma isn't 1.
 - **sat** / **vib** – shown when saturation isn't 100 %; `vib` in vibrance mode.
@@ -117,6 +121,14 @@ In fullscreen there's no title bar, so the same information appears on the right
 
 Only the visible part of the image is resampled, at the display's real pixel resolution, using all CPU cores. Memory use therefore doesn't grow with the zoom level. If a bicubic or Lanczos3 render is too slow to keep up while dragging (very large windows on slower machines), a quick preview is shown during the drag and the full render appears as soon as the view is still.
 
+## Contrast stretch
+
+`C` turns on a contrast stretch and steps it up, `X` steps it down and off, and `V` turns it off. It finds a black point and a white point in the image's values and maps them to 0 and 255, spreading everything between linearly, so an image that only uses part of the range fills all of it. One pair of points is used for red, green and blue together (a *linked* stretch), so hues are kept, although colors look more saturated, since their differences grow along with everything else.
+
+The steps set how much to clip at each end: at **0 %** the darkest value present becomes black and the brightest white, so nothing is lost. At **0.1 %**, **0.5 %**, **1 %**, **2 %** and **5 %** that fraction of the values (of all three channels pooled, ignoring fully transparent pixels) is pushed to black at the bottom and to white at the top. This keeps a few hot pixels or a bright star from setting the white point and leaving the rest of the image dim. Each step shows the points it found, e.g. `Contrast stretch 1%: 40–4055 (16-bit) → 0–255`, in the image's own values. The points are worked out from the whole image, not just the part in view, so the mapping doesn't change while you pan.
+
+The stretch is applied to the image itself, before resampling and the tone adjustments below, and at the image's full precision. That matters for images with more than 8 bits per channel. A 12-bit frame stored as 16-bit (values 0–4095) shows on screen as only about 16 dark grey levels, but stretched it uses all 256, each showing real differences in the data. An 8-bit image only has its existing levels spread apart, so a strong stretch of a low-contrast 8-bit image looks stepped.
+
 ## Tone adjustments: invert, gamma and saturation
 
 These change only what is displayed, never the file. They are applied after resampling, to what is on screen:
@@ -130,13 +142,13 @@ These change only what is displayed, never the file. They are applied after resa
    - **Below 100 %** (`L`) colors move towards grey in steps of 10 %, reaching greyscale at 0 % after 10 presses. Nothing is clipped here: pure red (255, 0, 0) at 60 % becomes (175, 22, 22).
    - **Vibrance** (`B` switches to it and back): the same change, weighted by how muted each pixel already is. The factor becomes 1 + (*s* − 1) · (1 − *S*), where *S* is the pixel's HSV saturation, (max − min) / max: grey pixels get the full change and fully saturated ones none. Boosted, it brings up near-grey colors as strongly as linear does while keeping strong colors from clipping: at 1600 %, (40, 120, 200) becomes (0, 154, 255) instead of linear's clipped (0, 255, 255). Dark pixels count as relatively saturated, so faint color noise in a dark sky stays put: (2, 0, 1) is unchanged, where linear makes it (32, 0, 16). Reduced, it greys muted colors first and leaves vivid ones. The title, saved view names and PNG text say `vib` / `vibrance` instead of `sat` / `saturation` while it's on, and `'` and `Backspace` reset the amount but keep the mode.
 
-With inversion off, γ = 1 and saturation at 100 % the image is drawn untouched, so nearest mode still shows the exact stored values.
+With the stretch off, inversion off, γ = 1 and saturation at 100 % the image is drawn untouched, so nearest mode still shows the exact stored values.
 
 Gamma only redistributes the 256 levels that are already there. Strong settings make the stretched end look stepped and merge levels at the other end, and they amplify noise along with real features, so a moderate setting often reads best.
 
 ## Saving the view
 
-`S` saves what the image area shows right now – the visible part of the image, with the current resampling, inversion, gamma and saturation applied – as a lossless PNG. No window background or interface is included, and it's saved at the display's resolution, so at 1:1 in nearest mode the file holds the exact (tone-adjusted) pixel values.
+`S` saves what the image area shows right now – the visible part of the image, with the current stretch, resampling, inversion, gamma and saturation applied – as a lossless PNG. No window background or interface is included, and it's saved at the display's resolution, so at 1:1 in nearest mode the file holds the exact (tone-adjusted) pixel values.
 
 - **Where:** next to the image, named after it and the view settings, e.g. `frame_0012_view_x3.000_nearest_inv_g1.68_sat60.png`. An existing file is never overwritten: `-2`, `-3`, … is added instead. If the image's folder isn't writable, the file goes to your Pictures folder. The status bar shows where it was saved, and so does the terminal or log: each save prints a line to standard output, e.g. `imgview: saved view to /data/sol42/frame_0012_view_x3.000_nearest_inv.png (nearest, 3.000x, inverted; source region x=812 y=440 w=300 h=220)`. A failed save is reported on standard error.
 - **Save as:** `Shift` + `S` opens a save dialog instead (PNG by default; TIFF and other formats by file extension).
@@ -315,7 +327,7 @@ If a build fails after tagging, fix it, then move the tag to the fixed commit (`
 src/main.cpp                    Entry point: options, macOS open events
 src/ImageViewer.h/.cpp          Main window (info and help panels, keys, title, status bar)
                                 and the zoomable, pannable image view
-src/Resample.h/.cpp             Nearest, bicubic and Lanczos3 resamplers, tone adjustments (invert/gamma tables, saturation)
+src/Resample.h/.cpp             Nearest, bicubic and Lanczos3 resamplers, contrast stretch, tone adjustments (invert/gamma tables, saturation)
 data/imgview.desktop.in         Desktop entry template (installed as imgview.desktop)
 data/imgview.1                  Man page
 packaging/macos/                macOS Info.plist, icon (and its generator), Exiv2
