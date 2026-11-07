@@ -52,6 +52,7 @@ private:
   void stepSaturation(int delta);
   void stepStretch(int delta);
   void toggleSaturationMode();
+  void stepFalseColor(int delta);
   void togglePixelTips();
   void resetTone();
   void toggleHelpPanel();
@@ -194,6 +195,17 @@ public:
   // "saturation" or "vibrance", for messages and saved view names.
   QString saturationModeName() const;
 
+  // False colour, applied last: each pixel's luma (after inversion and
+  // gamma) picks a colour from a perceptually uniform map, so small
+  // differences in brightness show as differences in hue. Replaces the
+  // saturation change while on.
+  enum class FalseColor { Off, Inferno, Viridis };
+  static constexpr int kFalseColorCount = 3;
+  FalseColor falseColor() const { return m_falseColor; }
+  void setFalseColor(FalseColor map);
+  // "off", "inferno" or "viridis".
+  static QString falseColorName(FalseColor map);
+
 signals:
   // Scale, fit state or interpolation mode may have changed.
   void viewChanged();
@@ -272,7 +284,9 @@ private:
   // cacheKey() is m_adjustedSourceKey; it's cleared whenever the tone
   // settings change.
   void rebuildToneLut();
+  const ColorMap *colorMap() const; // null when false colour is off
   bool m_inverted = false;
+  FalseColor m_falseColor = FalseColor::Off;
   int m_gammaStep = 0;
   int m_saturationStep = 0;
   SaturationMode m_saturationMode = SaturationMode::Linear;

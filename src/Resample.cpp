@@ -234,7 +234,7 @@ ToneLut buildToneLut(bool invert, double gamma) {
 }
 
 void applyTone(QImage &img, const ToneLut &lut, double saturation,
-               SaturationMode mode) {
+               SaturationMode mode, const ColorMap *colorMap) {
   if (img.isNull())
     return;
   Q_ASSERT(img.format() == QImage::Format_ARGB32_Premultiplied);
@@ -260,7 +260,7 @@ void applyTone(QImage &img, const ToneLut &lut, double saturation,
           };
           r = straight(r), g = straight(g), bl = straight(bl);
         }
-        if (s != 256) {
+        if (s != 256 && !colorMap) {
           int ps = s; // this pixel's factor, in 1/256ths
           if (mode == SaturationMode::Vibrance) {
             // Weight the change by 1 - S, S = HSV saturation in 1/256ths.
@@ -279,6 +279,11 @@ void applyTone(QImage &img, const ToneLut &lut, double saturation,
           r = saturate(r), g = saturate(g), bl = saturate(bl);
         }
         r = lut[r], g = lut[g], bl = lut[bl];
+        if (colorMap) {
+          const QRgb c =
+              (*colorMap)[(kR * r + kG * g + kB * bl + 128) >> 8];
+          r = qRed(c), g = qGreen(c), bl = qBlue(c);
+        }
         if (a != 255) {
           auto premultiply = [a](uint c) { return (c * a + 127) / 255; };
           r = premultiply(r), g = premultiply(g), bl = premultiply(bl);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ColorMaps.h"
+
 #include <QImage>
 #include <array>
 #include <vector>
@@ -60,10 +62,12 @@ enum class SaturationMode {
 //   s = 1 + (saturation - 1) * (1 - S),  S = (max - min) / max
 // (its HSV saturation), so grey pixels get the full change and fully
 // saturated ones none. Channels overshooting [0, 255] are clamped.
+// With a colour map, the saturation change is skipped; instead, after the
+// lut, each pixel is replaced by the map's colour for its Rec. 709 luma.
 // Translucent pixels are un-premultiplied, adjusted and re-premultiplied.
 // `img` must be Format_ARGB32_Premultiplied.
 void applyTone(QImage &img, const ToneLut &lut, double saturation,
-               SaturationMode mode);
+               SaturationMode mode, const ColorMap *colorMap = nullptr);
 
 // Whether `format` has more than 8 bits per colour channel.
 bool isDeepFormat(QImage::Format format);

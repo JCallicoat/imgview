@@ -135,6 +135,31 @@ QString ScaledImageLabel::saturationModeName() const {
                                                       : "saturation";
 }
 
+void ScaledImageLabel::setFalseColor(FalseColor map) {
+  if (map == m_falseColor)
+    return;
+  m_falseColor = map;
+  rebuildToneLut();
+}
+
+QString ScaledImageLabel::falseColorName(FalseColor map) {
+  switch (map) {
+  case FalseColor::Inferno: return "inferno";
+  case FalseColor::Viridis: return "viridis";
+  case FalseColor::Off:     break;
+  }
+  return "off";
+}
+
+const ColorMap *ScaledImageLabel::colorMap() const {
+  switch (m_falseColor) {
+  case FalseColor::Inferno: return &kInfernoMap;
+  case FalseColor::Viridis: return &kViridisMap;
+  case FalseColor::Off:     break;
+  }
+  return nullptr;
+}
+
 double ScaledImageLabel::saturation() const {
   return m_saturationStep <= 0 ? 1.0 + 0.1 * m_saturationStep
                                : std::pow(2.0, m_saturationStep / 4.0);
@@ -144,7 +169,7 @@ double ScaledImageLabel::saturation() const {
 // S-curve) would be built here too.
 void ScaledImageLabel::rebuildToneLut() {
   m_toneIsIdentity = !m_inverted && m_gammaStep == 0 &&
-                     m_saturationStep == 0;
+                     m_saturationStep == 0 && m_falseColor == FalseColor::Off;
   m_toneLut = buildToneLut(m_inverted, gamma());
   m_adjustedCache = QImage();
   update();
@@ -162,7 +187,8 @@ const QImage &ScaledImageLabel::forDisplay(const QImage &rendered) {
     // applyTone() then detaches, so `rendered` itself is untouched.
     m_adjustedCache =
         rendered.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-    applyTone(m_adjustedCache, m_toneLut, saturation(), m_saturationMode);
+    applyTone(m_adjustedCache, m_toneLut, saturation(), m_saturationMode,
+              colorMap());
     m_adjustedSourceKey = rendered.cacheKey();
   }
   return m_adjustedCache;
@@ -384,7 +410,8 @@ void ScaledImageLabel::paintEvent(QPaintEvent *event) {
         p.translate(-pos);
         p.drawImage(visible, m_original, source);
         p.end();
-        applyTone(preview, m_toneLut, saturation(), m_saturationMode);
+        applyTone(preview, m_toneLut, saturation(), m_saturationMode,
+                  colorMap());
         painter.drawImage(pos, preview);
       }
       return;
@@ -1017,11 +1044,19 @@ void ImageViewer::saveView(bool chooseLocation) {
     tag += "_g" + g;
     settings += ", gamma " + g;
   }
-  if (m_label->saturationStep() != 0) {
+  // The saturation change isn't applied while false color is on.
+  const bool falseColor =
+      m_label->falseColor() != ScaledImageLabel::FalseColor::Off;
+  if (m_label->saturationStep() != 0 && !falseColor) {
     const QString name = m_label->saturationModeName(); // "saturation" or "vibrance"
     const QString sat = QString::number(m_label->saturationPercent());
     tag += "_" + name.left(3) + sat; // e.g. "_sat168", "_vib168"
     settings += ", " + name + " " + sat + "%";
+  }
+  if (falseColor) {
+    const QString map = ScaledImageLabel::falseColorName(m_label->falseColor());
+    tag += "_" + map;
+    settings += ", false color " + map;
   }
   const QRect region = m_label->visibleSourceRect().toAlignedRect();
 
@@ -1411,10 +1446,13 @@ void ImageViewer::updateWindowTitle() {
     info += ", inverted";
   if (m_label->gammaStep() != 0)
     info += QString(", γ %1").arg(m_label->gamma(), 0, 'f', 2);
-  if (m_label->saturationStep() != 0)
+  if (m_label->saturationStep() != 0 &&
+      m_label->falseColor() == ScaledImageLabel::FalseColor::Off)
     info += QString(", %1 %2%")
                 .arg(m_label->saturationModeName().left(3))
                 .arg(m_label->saturationPercent());
+  if (m_label->falseColor() != ScaledImageLabel::FalseColor::Off)
+    info += ", " + ScaledImageLabel::falseColorName(m_label->falseColor());
   if (!m_label->originalSize().isEmpty()) {
     info += QString(", %1%2×")
                 .arg(m_label->isFitToWindow() ? "fit " : "")
@@ -1507,6 +1545,20 @@ void ImageViewer::toggleSaturationMode() {
       kSettingMessageMs);
 }
 
+// K / Shift+K: cycle the false colour map forwards / backwards.
+void ImageViewer::stepFalseColor(int delta) {
+  using FalseColor = ScaledImageLabel::FalseColor;
+  constexpr int n = ScaledImageLabel::kFalseColorCount;
+  const auto map = FalseColor((int(m_label->falseColor()) + delta + n) % n);
+  m_label->setFalseColor(map);
+  statusBar()->showMessage(
+      map == FalseColor::Off
+          ? QString("False color off")
+          : QString("False color: %1, dark to bright")
+                .arg(ScaledImageLabel::falseColorName(map)),
+      kSettingMessageMs);
+}
+
 // P: while on, resting the pointer on the image shows the stored value of
 // the pixel under it in a tooltip.
 void ImageViewer::togglePixelTips() {
@@ -1525,7 +1577,9 @@ void ImageViewer::resetTone() {
   m_label->setInverted(false);
   m_label->setGammaStep(0);
   m_label->setSaturationStep(0);
-  statusBar()->showMessage("Stretch, inversion, gamma and saturation reset",
+  m_label->setFalseColor(ScaledImageLabel::FalseColor::Off);
+  statusBar()->showMessage(
+      "Stretch, inversion, gamma, saturation and false color reset",
                            kSettingMessageMs);
 }
 
@@ -1588,7 +1642,10 @@ void ImageViewer::updateHelpPanel() {
       {"b", "Saturation mode: linear, vibrance",
        m_label->saturationMode() == SaturationMode::Vibrance ? "vibrance"
                                                               : "linear"},
-      {"Backspace", "Reset stretch, inversion, gamma, saturation", {}},
+      {"k", "False color: off, inferno, viridis",
+       ScaledImageLabel::falseColorName(m_label->falseColor())},
+      {"Shift+k", "False color, the other way", {}},
+      {"Backspace", "Reset all tone settings above", {}},
       {"", "Images", {}},
       {"← →", "Previous, next image (when it fits)", {}},
       {"o", "Open an image", {}},
@@ -1724,6 +1781,9 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
     } else {
       stepStretch(event->key() == Qt::Key_C ? 1 : -1);
     }
+    return true;
+  case Qt::Key_K: // Shift+K: the other way round
+    stepFalseColor(event->modifiers() & Qt::ShiftModifier ? -1 : 1);
     return true;
   case Qt::Key_P:
     togglePixelTips();
