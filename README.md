@@ -70,8 +70,8 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | `L` | Saturation down: towards grey, down to 0 % |
 | `'` | Reset saturation to 100 % |
 | `B` | Switch saturation between **linear** (default) and **vibrance** |
-| `X` / `C` | Contrast stretch less / more: off → 0 % → 0.1 % → 0.5 % → 1 % → 2 % → 5 % clipped |
-| `V` | Contrast stretch off |
+| `X` / `C` | Contrast less / more: squash 20 % ← 40 % ← 60 % ← 80 % ← off → stretch 0 % → 0.1 % → 0.5 % → 1 % → 2 % → 5 % → 10 % → 20 % → 30 % clipped |
+| `V` | Contrast stretch or squash off |
 | `H` | High-pass: off → 1 → 2 → 4 → 8 → 16 px → off (`Shift` + `H`: the other way) |
 | `K` | False color: off → inferno → viridis → off (`Shift` + `K`: the other way) |
 | `Backspace` | Reset stretch, high-pass, inversion, gamma, saturation and false color at once |
@@ -105,7 +105,7 @@ frame_0013.png (13/48) – Image Viewer [area, stretch 0.5%, fit 0.421×]
 ```
 
 - **nearest / bicubic / lanczos3 / area** – the resampling actually applied: the selected mode when zoomed in, `area` when zoomed out (where every mode uses the same area-averaging downscale). The help panel (`?`) shows the selected mode.
-- **stretch** – shown with its clip percentage when the contrast stretch is on.
+- **stretch** / **squash** – shown with its clip percentage when the contrast stretch is on, or with the share of the range left when contrast is squashed.
 - **high-pass** – shown with its radius when the high-pass view is on.
 - **inverted** – shown when color inversion is on.
 - **γ** – shown when gamma isn't 1.
@@ -129,11 +129,13 @@ Only the visible part of the image is resampled, at the display's real pixel res
 
 ## Contrast stretch
 
-`C` turns on a contrast stretch and steps it up, `X` steps it down and off, and `V` turns it off. It finds a black point and a white point in the image's values and maps them to 0 and 255, spreading everything between linearly, so an image that only uses part of the range fills all of it. One pair of points is used for red, green and blue together (a *linked* stretch), so hues are kept, although colors look more saturated, since their differences grow along with everything else.
+`C` turns on a contrast stretch and steps it up, `X` steps it down and off and then on into a squash (below), and `V` turns either off. It finds a black point and a white point in the image's values and maps them to 0 and 255, spreading everything between linearly, so an image that only uses part of the range fills all of it. One pair of points is used for red, green and blue together (a *linked* stretch), so hues are kept, although colors look more saturated, since their differences grow along with everything else.
 
-The steps set how much to clip at each end: at **0 %** the darkest value present becomes black and the brightest white, so nothing is lost. At **0.1 %**, **0.5 %**, **1 %**, **2 %** and **5 %** that fraction of the values (of all three channels pooled, ignoring fully transparent pixels) is pushed to black at the bottom and to white at the top. This keeps a few hot pixels or a bright star from setting the white point and leaving the rest of the image dim. Each step shows the points it found, e.g. `Contrast stretch 1%: 40–4055 (16-bit) → 0–255`, in the image's own values. The points are worked out from the whole image, not just the part in view, so the mapping doesn't change while you pan.
+The steps set how much to clip at each end: at **0 %** the darkest value present becomes black and the brightest white, so nothing is lost. At **0.1 %**, **0.5 %**, **1 %**, **2 %**, **5 %**, **10 %**, **20 %** and **30 %** that fraction of the values (of all three channels pooled, ignoring fully transparent pixels) is pushed to black at the bottom and to white at the top. This keeps a few hot pixels or a bright star from setting the white point and leaving the rest of the image dim. The strongest steps throw away a lot – at 30 % only the middle 40 % of the values keep their differences – but they pull apart the levels of a faint, low-contrast area that fills most of the frame. Each step shows the points it found, e.g. `Contrast stretch 1%: 40–4055 (16-bit) → 0–255`, in the image's own values. The points are worked out from the whole image, not just the part in view, so the mapping doesn't change while you pan.
 
 The stretch is applied to the image itself, before resampling and the tone adjustments below, and at the image's full precision. That matters for images with more than 8 bits per channel. A 12-bit frame stored as 16-bit (values 0–4095) shows on screen as only about 16 dark grey levels, but stretched it uses all 256, each showing real differences in the data. An 8-bit image only has its existing levels spread apart, so a strong stretch of a low-contrast 8-bit image looks stepped.
+
+**Squash** is the opposite: pressing `X` past off reduces contrast instead. The full range of values, black to white, is mapped linearly onto the middle **80 %**, **60 %**, **40 %** or **20 %** of the displayed range, around mid-grey, e.g. `Contrast squash 60%: 0–255 → 51–204`. Nothing is clipped and no levels are merged that weren't already (on an 8-bit image, squashing below about 50 % does start merging neighbouring levels on screen). It's the same for every image, not worked out from its values. It leaves headroom at both ends for the gamma curve or false color to work in, and tames a harsh, high-contrast frame so its darkest and brightest parts can be seen side by side.
 
 ## High-pass
 

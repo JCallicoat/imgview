@@ -156,11 +156,16 @@ public:
   // before resampling, so a deeper image is stretched at full precision.
   // Step 0 is off; steps 1 to kMaxStretchStep clip increasing percentages
   // of the values at each end, starting at 0 % (darkest value to black,
-  // brightest to white).
-  static constexpr int kMaxStretchStep = 6;
+  // brightest to white). Negative steps, down to kMinStretchStep, squash
+  // contrast instead (see squashRange()).
+  static constexpr int kMinStretchStep = -4;
+  static constexpr int kMaxStretchStep = 9;
   int stretchStep() const { return m_stretchStep; }
   void setStretchStep(int step);
-  double stretchClipPercent() const;
+  double stretchClipPercent() const; // 0 unless stretching
+  int squashPercent() const;          // 100 unless squashing
+  // "stretch 5%", "squash 60%" or "off".
+  QString stretchName() const;
   // The black and white points in use, on the 16-bit scale.
   StretchRange stretchRange() const { return m_stretchRange; }
   bool isDeep() const { return m_deep; } // more than 8 bits per channel

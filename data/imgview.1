@@ -71,10 +71,12 @@ Switch saturation between linear (every color changed alike) and vibrance
 (muted colors changed more than vivid ones).
 .TP
 .B x c v
-Contrast stretch less, more, off. The darkest and brightest values (with
-0, 0.1, 0.5, 1, 2 or 5% of the values clipped at each end) become black
-and white, for all colour channels together; 16-bit images are stretched at
-full precision.
+Contrast less, more, normal. Stretching (c from normal): the darkest and
+brightest values (with 0, 0.1, 0.5, 1, 2, 5, 10, 20 or 30% of the values
+clipped at each end) become black and white, for all colour channels
+together; 16-bit images are stretched at full precision. Squashing (x from
+normal): the full range is mapped onto the middle 80, 60, 40 or 20% of the
+displayed range.
 .TP
 .B h
 Cycle the high-pass view: off, 1, 2, 4, 8, 16 pixels (with Shift: the other

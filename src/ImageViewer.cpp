@@ -226,7 +226,9 @@ void ScaledImageLabel::updateProcessed() {
     m_original = QImage();
     return;
   }
-  if (m_stretchStep != 0) {
+  if (m_stretchStep < 0) {
+    m_stretchRange = squashRange(squashPercent() / 100.0);
+  } else if (m_stretchStep > 0) {
     if (m_stretchHistogram.empty())
       m_stretchHistogram = stretchHistogram(m_source);
     m_stretchRange = findStretchRange(m_stretchHistogram, stretchClipPercent());
@@ -260,13 +262,25 @@ void ScaledImageLabel::setHighPassStep(int step) {
 }
 
 double ScaledImageLabel::stretchClipPercent() const {
-  static constexpr double kClipPercent[kMaxStretchStep] = {0,   0.1, 0.5,
-                                                           1.0, 2.0, 5.0};
+  static constexpr double kClipPercent[kMaxStretchStep] = {
+      0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0};
   return m_stretchStep > 0 ? kClipPercent[m_stretchStep - 1] : 0.0;
 }
 
+int ScaledImageLabel::squashPercent() const {
+  return m_stretchStep < 0 ? 100 + 20 * m_stretchStep : 100; // 80 % to 20 %
+}
+
+QString ScaledImageLabel::stretchName() const {
+  if (m_stretchStep > 0)
+    return QString("stretch %1%").arg(stretchClipPercent());
+  if (m_stretchStep < 0)
+    return QString("squash %1%").arg(squashPercent());
+  return "off";
+}
+
 void ScaledImageLabel::setStretchStep(int step) {
-  step = qBound(0, step, kMaxStretchStep);
+  step = qBound(kMinStretchStep, step, kMaxStretchStep);
   if (step == m_stretchStep)
     return;
   m_stretchStep = step;
@@ -1057,10 +1071,14 @@ void ImageViewer::saveView(bool chooseLocation) {
   QString tag = "x" + zoom + "_" + mode;
   QString settings = QString("%1, %2x%3").arg(
       mode, zoom, m_label->isFitToWindow() ? " (fit)" : "");
-  if (m_label->stretchStep() != 0) {
+  if (m_label->stretchStep() > 0) {
     const QString clip = QString::number(m_label->stretchClipPercent());
     tag += "_st" + clip;
     settings += ", stretch " + clip + "%";
+  } else if (m_label->stretchStep() < 0) {
+    const QString squash = QString::number(m_label->squashPercent());
+    tag += "_sq" + squash;
+    settings += ", squash " + squash + "%";
   }
   if (m_label->highPassStep() != 0) {
     const QString radius = QString::number(m_label->highPassRadius());
@@ -1473,7 +1491,7 @@ void ImageViewer::updateWindowTitle() {
   }
   QString info = m_label->resamplingName();
   if (m_label->stretchStep() != 0)
-    info += QString(", stretch %1%").arg(m_label->stretchClipPercent());
+    info += ", " + m_label->stretchName();
   if (m_label->highPassStep() != 0)
     info += QString(", high-pass %1 px").arg(m_label->highPassRadius());
   if (m_label->isInverted())
@@ -1554,14 +1572,25 @@ void ImageViewer::stepStretch(int delta) {
   }
   const StretchRange range = m_label->stretchRange();
   const bool deep = m_label->isDeep();
-  QString message =
-      QString("Contrast stretch %1%: %2–%3%4 → 0–255")
-          .arg(m_label->stretchClipPercent())
-          .arg(deep ? range.black : range.black / 257)
-          .arg(deep ? range.white : range.white / 257)
-          .arg(deep ? " (16-bit)" : "");
-  if (m_label->stretchStep() == before && delta > 0)
-    message += " (maximum)";
+  QString message;
+  if (m_label->stretchStep() > 0) {
+    message = QString("Contrast stretch %1%: %2–%3%4 → 0–255")
+                  .arg(m_label->stretchClipPercent())
+                  .arg(deep ? range.black : range.black / 257)
+                  .arg(deep ? range.white : range.white / 257)
+                  .arg(deep ? " (16-bit)" : "");
+  } else {
+    // Where black and white end up.
+    const int low = int(std::lround(-range.black * 255.0 /
+                                    (range.white - range.black)));
+    message = QString("Contrast squash %1%: %2 → %3–%4")
+                  .arg(m_label->squashPercent())
+                  .arg(deep ? "0–65535 (16-bit)" : "0–255")
+                  .arg(low)
+                  .arg(255 - low);
+  }
+  if (m_label->stretchStep() == before)
+    message += delta > 0 ? " (maximum)" : " (minimum)";
   statusBar()->showMessage(message, kSettingMessageMs);
 }
 
@@ -1687,11 +1716,9 @@ void ImageViewer::updateHelpPanel() {
       {"i", "Zoom-in resampling: nearest, bicubic, lanczos3",
        ScaledImageLabel::interpolationName(m_label->interpolation())},
       {"", "Tone", {}},
-      {"x  c", "Contrast stretch less, more (% clipped)",
-       m_label->stretchStep() == 0
-           ? QString("off")
-           : QString("%1%").arg(m_label->stretchClipPercent())},
-      {"v", "Contrast stretch off", {}},
+      {"x  c", "Contrast less (squash), more (stretch)",
+       m_label->stretchName()},
+      {"v", "Contrast stretch or squash off", {}},
       {"h", "High-pass: off, 1, 2, 4, 8, 16 px",
        m_label->highPassStep() == 0
            ? QString("off")
@@ -1841,7 +1868,8 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
       return false;
     if (event->key() == Qt::Key_V) {
       m_label->setStretchStep(0);
-      statusBar()->showMessage("Contrast stretch off", kSettingMessageMs);
+      statusBar()->showMessage("Contrast stretch and squash off",
+                               kSettingMessageMs);
     } else {
       stepStretch(event->key() == Qt::Key_C ? 1 : -1);
     }

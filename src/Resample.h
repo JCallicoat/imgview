@@ -97,6 +97,12 @@ StretchRange findStretchRange(const StretchHistogram &hist,
 // Format_ARGB32_Premultiplied.
 QImage applyStretch(const QImage &img, const StretchRange &range);
 
+// The range for the opposite of a stretch, a contrast squash: the full
+// 16-bit range widened around its middle so that it maps to the middle
+// `factor` (0-1) of [0, 255], e.g. 0.6 maps black to 51 and white to 204.
+// The black point is then below 0 and the white point above 65535.
+StretchRange squashRange(double factor);
+
 // High-pass view: what's left of `img` after taking away its Gaussian blur
 // of standard deviation `sigma` pixels, so only detail smaller than about
 // sigma remains. Each colour channel (on a 0-1 scale, after the stretch

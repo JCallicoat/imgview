@@ -413,6 +413,14 @@ StretchRange findStretchRange(const StretchHistogram &hist,
   return range;
 }
 
+StretchRange squashRange(double factor) {
+  const double span = 65535.0 / factor;
+  StretchRange range;
+  range.black = int(std::lround(32767.5 - span / 2));
+  range.white = 65535 - range.black;
+  return range;
+}
+
 QImage applyStretch(const QImage &img, const StretchRange &range) {
   const QImage src = stretchInput(img);
   if (src.isNull())
