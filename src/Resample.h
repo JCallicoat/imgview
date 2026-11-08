@@ -96,3 +96,17 @@ StretchRange findStretchRange(const StretchHistogram &hist,
 // [0, 255], clamped outside it, alpha unchanged. Returns
 // Format_ARGB32_Premultiplied.
 QImage applyStretch(const QImage &img, const StretchRange &range);
+
+// High-pass view: what's left of `img` after taking away its Gaussian blur
+// of standard deviation `sigma` pixels, so only detail smaller than about
+// sigma remains. Each colour channel (on a 0-1 scale, after the stretch
+// `range`; the default range is no stretch) becomes
+//   out = 127.5 + 127.5 * (in - blur) / limit,
+// clamped to [0, 255]: mid-grey where a pixel matches its surroundings,
+// lighter or darker where it stands out. `limit` is one value for all
+// channels, the size of difference that 0.1 % of the values exceed, so the
+// gain adapts to the image and only the strongest outliers clip. It's
+// returned through `limit` if given. Edges are extended by repeating the
+// border pixels. Alpha is unchanged. Returns Format_ARGB32_Premultiplied.
+QImage applyHighPass(const QImage &img, const StretchRange &range,
+                     double sigma, double *limit = nullptr);

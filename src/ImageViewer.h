@@ -51,6 +51,7 @@ private:
   void stepGamma(int delta);
   void stepSaturation(int delta);
   void stepStretch(int delta);
+  void stepHighPass(int delta);
   void toggleSaturationMode();
   void stepFalseColor(int delta);
   void togglePixelTips();
@@ -164,6 +165,17 @@ public:
   StretchRange stretchRange() const { return m_stretchRange; }
   bool isDeep() const { return m_deep; } // more than 8 bits per channel
 
+  // High-pass view (see applyHighPass()), applied after the stretch, also
+  // before resampling. Step 0 is off; steps 1 to kMaxHighPassStep keep
+  // detail up to a blur radius (sigma) of 1, 2, 4, 8 or 16 image pixels.
+  static constexpr int kMaxHighPassStep = 5;
+  int highPassStep() const { return m_highPassStep; }
+  void setHighPassStep(int step);
+  double highPassRadius() const; // 0 when off
+  // The difference shown as full white or black, on a 0-1 scale of the
+  // stretched values.
+  double highPassLimit() const { return m_highPassLimit; }
+
   // Display tone adjustments, applied after resampling: a saturation
   // change, optional colour inversion, then a gamma curve.
   bool isInverted() const { return m_inverted; }
@@ -237,7 +249,7 @@ private:
   const QImage &forDisplay(const QImage &rendered);
 
   // The image as shown before resampling: m_source with the contrast
-  // stretch applied, if on. Kept as an ARGB32_Premultiplied QImage so the
+  // stretch and high-pass applied, if on. Kept as an ARGB32_Premultiplied QImage so the
   // bicubic resampler can read its pixels directly.
   QImage m_original;
   // The image with its stored values, for the stretch and the pixel value
@@ -249,6 +261,8 @@ private:
   int m_stretchStep = 0;
   StretchHistogram m_stretchHistogram; // of m_source; empty until needed
   StretchRange m_stretchRange;
+  int m_highPassStep = 0;
+  double m_highPassLimit = 0.0;
   bool m_deep = false;     // more than 8 bits per channel
   bool m_gray = false;     // all pixels grey
   bool m_hasAlpha = false;

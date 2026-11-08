@@ -444,3 +444,135 @@ QImage applyStretch(const QImage &img, const StretchRange &range) {
   });
   return out;
 }
+
+QImage applyHighPass(const QImage &img, const StretchRange &range,
+                     double sigma, double *limit) {
+  const QImage src = stretchInput(img);
+  if (src.isNull())
+    return {};
+  const int w = src.width(), h = src.height();
+  const size_t n = size_t(w) * h;
+  const bool deep = src.format() == QImage::Format_RGBA64;
+
+  // The stretched channel values on a 0-1 scale, and the 8-bit alpha.
+  std::vector<float> planes[3];
+  for (auto &plane : planes)
+    plane.resize(n);
+  std::vector<quint8> alpha(n);
+  const double black = range.black, span = range.white - range.black;
+  const double toScale16 = deep ? 1.0 : 257.0;
+  auto stretched = [&](uint v) {
+    return float(std::clamp((v * toScale16 - black) / span, 0.0, 1.0));
+  };
+  parallelRows(h, [&](int b, int e) {
+    size_t i = size_t(b) * w;
+    forEachPixel(src, b, e, [&](uint r, uint g, uint bl, uint a) {
+      planes[0][i] = stretched(r);
+      planes[1][i] = stretched(g);
+      planes[2][i] = stretched(bl);
+      alpha[i++] = quint8(deep ? (a + 128) / 257 : a);
+    });
+  });
+
+  // Normalised Gaussian kernel, out to 3 sigma.
+  const int radius = std::max(1, int(std::ceil(3.0 * sigma)));
+  std::vector<float> kernel(2 * radius + 1);
+  double sum = 0.0;
+  for (int k = -radius; k <= radius; ++k)
+    sum += kernel[k + radius] = float(std::exp(-0.5 * k * k / (sigma * sigma)));
+  for (float &v : kernel)
+    v = float(v / sum);
+
+  // Separable blur of each channel, then the difference from the blur in
+  // place of the values.
+  std::vector<float> tmp(n);
+  for (auto &plane : planes) {
+    parallelRows(h, [&](int b, int e) {
+      std::vector<float> row(size_t(w) + 2 * radius); // with repeated edges
+      for (int y = b; y < e; ++y) {
+        const float *in = plane.data() + size_t(y) * w;
+        std::fill(row.begin(), row.begin() + radius, in[0]);
+        std::copy(in, in + w, row.begin() + radius);
+        std::fill(row.begin() + radius + w, row.end(), in[w - 1]);
+        float *out = tmp.data() + size_t(y) * w;
+        for (int x = 0; x < w; ++x) {
+          float acc = 0.0f;
+          for (int k = 0; k <= 2 * radius; ++k)
+            acc += kernel[k] * row[x + k];
+          out[x] = acc;
+        }
+      }
+    });
+    parallelRows(h, [&](int b, int e) {
+      std::vector<float> acc(w);
+      for (int y = b; y < e; ++y) {
+        std::fill(acc.begin(), acc.end(), 0.0f);
+        for (int k = -radius; k <= radius; ++k) {
+          const float *in = tmp.data() + size_t(std::clamp(y + k, 0, h - 1)) * w;
+          const float wk = kernel[k + radius];
+          for (int x = 0; x < w; ++x)
+            acc[x] += wk * in[x];
+        }
+        float *out = plane.data() + size_t(y) * w;
+        for (int x = 0; x < w; ++x)
+          out[x] -= acc[x];
+      }
+    });
+  }
+  tmp = {};
+
+  // The gain: the difference exceeded by 0.1 % of the channel values of
+  // pixels that aren't fully transparent, at a resolution of 1/65535.
+  constexpr int kBins = 65536;
+  std::vector<quint64> hist(kBins, 0);
+  std::mutex mutex;
+  parallelRows(h, [&](int b, int e) {
+    std::vector<quint64> local(kBins, 0);
+    for (size_t i = size_t(b) * w; i < size_t(e) * w; ++i) {
+      if (alpha[i] == 0)
+        continue;
+      for (const auto &plane : planes)
+        ++local[std::min(kBins - 1, int(std::fabs(plane[i]) * 65535.0f + 0.5f))];
+    }
+    const std::lock_guard<std::mutex> lock(mutex);
+    for (int v = 0; v < kBins; ++v)
+      hist[v] += local[v];
+  });
+  quint64 total = 0;
+  for (quint64 c : hist)
+    total += c;
+  int top = 1; // at least one step, so a flat image stays flat
+  const double clip = double(total) * 0.001;
+  quint64 count = 0;
+  for (int v = kBins - 1; v > 1; --v) {
+    count += hist[v];
+    if (double(count) > clip) {
+      top = v;
+      break;
+    }
+  }
+  const float lim = top / 65535.0f;
+  if (limit)
+    *limit = lim;
+
+  QImage out(src.size(), QImage::Format_ARGB32_Premultiplied);
+  if (out.isNull())
+    return {};
+  uchar *const bits = out.bits();
+  const qsizetype bpl = out.bytesPerLine();
+  const float gain = 127.5f / lim;
+  auto level = [&](float d) {
+    return int(std::clamp(std::lround(127.5f + d * gain), 0L, 255L));
+  };
+  parallelRows(h, [&](int b, int e) {
+    for (int y = b; y < e; ++y) {
+      QRgb *line = reinterpret_cast<QRgb *>(bits + y * bpl);
+      for (int x = 0; x < w; ++x) {
+        const size_t i = size_t(y) * w + x;
+        line[x] = qPremultiply(qRgba(level(planes[0][i]), level(planes[1][i]),
+                                     level(planes[2][i]), alpha[i]));
+      }
+    }
+  });
+  return out;
+}

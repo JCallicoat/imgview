@@ -217,19 +217,46 @@ void ScaledImageLabel::setPixmap(const QImage &image) {
   resetView();
 }
 
-// Rebuild m_original from m_source for the current stretch setting.
+// Rebuild m_original from m_source for the current stretch and high-pass
+// settings.
 void ScaledImageLabel::updateProcessed() {
   m_stretchRange = StretchRange();
+  m_highPassLimit = 0.0;
   if (m_source.isNull()) {
     m_original = QImage();
-  } else if (m_stretchStep == 0) {
-    m_original = m_source.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-  } else {
+    return;
+  }
+  if (m_stretchStep != 0) {
     if (m_stretchHistogram.empty())
       m_stretchHistogram = stretchHistogram(m_source);
     m_stretchRange = findStretchRange(m_stretchHistogram, stretchClipPercent());
-    m_original = applyStretch(m_source, m_stretchRange);
   }
+  if (m_highPassStep != 0) {
+    QGuiApplication::setOverrideCursor(Qt::WaitCursor); // can take a second
+    m_original = applyHighPass(m_source, m_stretchRange, highPassRadius(),
+                               &m_highPassLimit);
+    QGuiApplication::restoreOverrideCursor();
+  } else if (m_stretchStep != 0) {
+    m_original = applyStretch(m_source, m_stretchRange);
+  } else {
+    m_original = m_source.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+  }
+}
+
+double ScaledImageLabel::highPassRadius() const {
+  return m_highPassStep > 0 ? double(1 << (m_highPassStep - 1)) : 0.0;
+}
+
+void ScaledImageLabel::setHighPassStep(int step) {
+  step = qBound(0, step, kMaxHighPassStep);
+  if (step == m_highPassStep)
+    return;
+  m_highPassStep = step;
+  updateProcessed();
+  m_scaledCache = QImage();
+  m_viewportCache = QImage();
+  update();
+  emit viewChanged();
 }
 
 double ScaledImageLabel::stretchClipPercent() const {
@@ -1035,6 +1062,11 @@ void ImageViewer::saveView(bool chooseLocation) {
     tag += "_st" + clip;
     settings += ", stretch " + clip + "%";
   }
+  if (m_label->highPassStep() != 0) {
+    const QString radius = QString::number(m_label->highPassRadius());
+    tag += "_hp" + radius;
+    settings += ", high-pass " + radius + " px";
+  }
   if (m_label->isInverted()) {
     tag += "_inv";
     settings += ", inverted";
@@ -1442,6 +1474,8 @@ void ImageViewer::updateWindowTitle() {
   QString info = m_label->resamplingName();
   if (m_label->stretchStep() != 0)
     info += QString(", stretch %1%").arg(m_label->stretchClipPercent());
+  if (m_label->highPassStep() != 0)
+    info += QString(", high-pass %1 px").arg(m_label->highPassRadius());
   if (m_label->isInverted())
     info += ", inverted";
   if (m_label->gammaStep() != 0)
@@ -1531,6 +1565,29 @@ void ImageViewer::stepStretch(int delta) {
   statusBar()->showMessage(message, kSettingMessageMs);
 }
 
+// H / Shift+H: cycle the high-pass radius up / down, through off. The
+// message gives the difference shown as full white or black, in the image's
+// own values (16-bit for a deeper image), before any stretch.
+void ImageViewer::stepHighPass(int delta) {
+  constexpr int n = ScaledImageLabel::kMaxHighPassStep + 1;
+  m_label->setHighPassStep((m_label->highPassStep() + delta + n) % n);
+  if (m_label->highPassStep() == 0) {
+    statusBar()->showMessage("High-pass off", kSettingMessageMs);
+    return;
+  }
+  const StretchRange range = m_label->stretchRange();
+  const bool deep = m_label->isDeep();
+  const double levels = m_label->highPassLimit() * (range.white - range.black) /
+                        (deep ? 1.0 : 257.0);
+  statusBar()->showMessage(
+      QString("High-pass %1 px: grey = like its surroundings, ±%2%3 → "
+              "white, black")
+          .arg(m_label->highPassRadius())
+          .arg(levels, 0, 'f', levels < 10 ? 1 : 0)
+          .arg(deep ? " (16-bit)" : ""),
+      kSettingMessageMs);
+}
+
 // B switches how the saturation factor is applied: the same to every pixel,
 // or weighted towards muted pixels (vibrance). The amount is kept.
 void ImageViewer::toggleSaturationMode() {
@@ -1573,14 +1630,16 @@ void ImageViewer::togglePixelTips() {
 // Backspace: undo every tone adjustment at once, so none is left on by
 // accident. Zoom and resampling mode are left as they are.
 void ImageViewer::resetTone() {
+  m_label->setHighPassStep(0); // first, so the stretch change doesn't redo it
   m_label->setStretchStep(0);
   m_label->setInverted(false);
   m_label->setGammaStep(0);
   m_label->setSaturationStep(0);
   m_label->setFalseColor(ScaledImageLabel::FalseColor::Off);
   statusBar()->showMessage(
-      "Stretch, inversion, gamma, saturation and false color reset",
-                           kSettingMessageMs);
+      "Stretch, high-pass, inversion, gamma, saturation and false color "
+      "reset",
+      kSettingMessageMs);
 }
 
 // The help panel on the left lists every key, with the current value of
@@ -1633,6 +1692,11 @@ void ImageViewer::updateHelpPanel() {
            ? QString("off")
            : QString("%1%").arg(m_label->stretchClipPercent())},
       {"v", "Contrast stretch off", {}},
+      {"h", "High-pass: off, 1, 2, 4, 8, 16 px",
+       m_label->highPassStep() == 0
+           ? QString("off")
+           : QString("%1 px").arg(m_label->highPassRadius())},
+      {"Shift+h", "High-pass, the other way", {}},
       {"n", "Invert colors", m_label->isInverted() ? "on" : "off"},
       {".  ,", "Gamma up (darker), down", QString::number(m_label->gamma(), 'f', 2)},
       {"/", "Reset gamma", {}},
@@ -1781,6 +1845,9 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
     } else {
       stepStretch(event->key() == Qt::Key_C ? 1 : -1);
     }
+    return true;
+  case Qt::Key_H: // Shift+H: the other way round
+    stepHighPass(event->modifiers() & Qt::ShiftModifier ? -1 : 1);
     return true;
   case Qt::Key_K: // Shift+K: the other way round
     stepFalseColor(event->modifiers() & Qt::ShiftModifier ? -1 : 1);

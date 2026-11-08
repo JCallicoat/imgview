@@ -13,7 +13,7 @@ imgview, iv \- image viewer for close inspection of pixels and metadata
 .B imgview
 shows an image scaled to the window. When zoomed in it shows the stored
 pixel values unmodified (nearest neighbour) by default, and it can stretch
-contrast, invert colors, adjust gamma and saturation and show brightness in false
+contrast, show only fine detail (high-pass), invert colors, adjust gamma and saturation and show brightness in false
 color to make faint features easier to spot. An info panel shows the file size, dimensions and EXIF, XMP and IPTC metadata.
 .PP
 .I path
@@ -76,6 +76,12 @@ Contrast stretch less, more, off. The darkest and brightest values (with
 and white, for all colour channels together; 16-bit images are stretched at
 full precision.
 .TP
+.B h
+Cycle the high-pass view: off, 1, 2, 4, 8, 16 pixels (with Shift: the other
+way). Each pixel is shown as its difference from a Gaussian blur of that
+radius, mid-grey where it matches its surroundings; the differences are
+scaled so that only the largest 0.1% clip to white or black.
+.TP
 .B k
 Cycle false color: off, inferno, viridis (with Shift: the other way). Each
 pixel's brightness, after inversion and gamma, picks a color from a
@@ -83,7 +89,7 @@ perceptually uniform map, so small differences show as changes of hue. The
 saturation change is skipped while it is on.
 .TP
 .B Backspace
-Reset stretch, inversion, gamma, saturation and false color.
+Reset stretch, high-pass, inversion, gamma, saturation and false color.
 .TP
 .B ?
 Show or hide the help panel, which lists every key and the current view
@@ -101,8 +107,8 @@ replaces the open image and is kept in memory only; the left and right
 arrow keys don't switch images until a file is opened.
 .TP
 .B s
-Save the image area as shown (zoom, stretch, inversion, gamma, saturation and
-false color applied) as a PNG next to the image, or in the Pictures folder if that isn't
+Save the image area as shown (zoom, stretch, high-pass, inversion, gamma,
+saturation and false color applied) as a PNG next to the image, or in the Pictures folder if that isn't
 writable or the image was pasted. With
 Shift: choose where to save.
 .TP
