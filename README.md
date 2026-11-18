@@ -35,6 +35,8 @@ iv path/to/image.jpg        # short alias, installed alongside imgview
 imgview path/to/folder      # opens the folder's first image
 imgview a.png b.png c.png   # ←/→ step through just these files
 iv sol_04*/*.png            # ...or whatever a shell glob matches
+magick in.png -negate png:- | imgview   # an image from standard input
+imgview - < frame.tif       # ...also with "-"
 imgview                     # opens an empty window (O: open, Ctrl+V: paste)
 imgview --version           # also --help
 ```
@@ -42,6 +44,8 @@ imgview --version           # also --help
 Started without a path (for example from the application menu, or by opening the app on macOS), imgview opens with no image; press `O` to open one with a file picker, at any time. On macOS, double-clicking an image or using **Open With** in Finder works too.
 
 **Pasting:** `Ctrl` + `V` shows the image on the clipboard, such as one copied with **Copy Image** in a web browser, without saving it first. It replaces the open image and is kept in memory only. The clipboard's image types are tried in the order it offers them (browsers usually offer `image/png`), and the title and info panel show which one was used, e.g. `Clipboard (image/png)`; the info panel also shows the pasted data's size and any metadata in it. `←` / `→` do nothing for a pasted image, since it has no folder; open a file to browse again. Saving the view (`S`) puts it in the Pictures folder, as `clipboard_view_….png`. If the clipboard holds no image, the open image stays and the status bar says so.
+
+**Standard input:** `imgview -` reads an image from standard input, and so does `imgview` with no paths when something is piped or redirected into it, e.g. from `magick … png:-` or `curl`. It's read until the writer closes it, its format is detected from the data, and like a pasted image it's kept in memory only, with nothing to browse: `←` / `→` and `PgUp` / `PgDn` don't switch images (an animation's frames can still be stepped through and played). The title and info panel show it as `stdin`, with the format, e.g. `stdin (png)`, and the info panel also shows the data size and any metadata in it. Saving the view (`S`) puts it in the current directory, as `stdin_view_….png`, or in the Pictures folder if that isn't writable. `-` can't be combined with other paths. If the data is empty or not an image Qt can read, the window says so, and so does standard error. Started from a terminal or a desktop menu, where standard input isn't a pipe or a file, imgview opens as usual.
 
 Given a folder, imgview opens its first image in the same natural order that `←` / `→` step through (only that folder, not subfolders); `←` / `→` then browse the rest. If the folder has no images, it says so, and `←` / `→` pick up any images added to it later.
 

@@ -2,13 +2,20 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QFile>
 #include <QFileOpenEvent>
 #include <QIcon>
 #include <QTimer>
 
 #include <exiv2/exiv2.hpp>
 
+#include <cstdio>
 #include <functional>
+
+#ifdef Q_OS_UNIX
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -62,8 +69,30 @@ void setUpParser(QCommandLineParser &parser) {
       "Image files or folders to open. With several, the left/right arrow "
       "keys step through just those, in the order given; with one, through "
       "its folder. Without any, the window opens empty: press O to open an "
-      "image, or Ctrl+V to paste one.",
+      "image, or Ctrl+V to paste one. \"-\" reads an image from standard "
+      "input, as does piping one in without any paths, e.g. "
+      "`magick in.png -negate png:- | imgview`.",
       "[path...]");
+}
+
+// Whether standard input has data piped or redirected in from a file, so
+// it's read without an explicit "-". Not for a terminal, nor /dev/null or
+// other devices, as when started from a desktop menu.
+bool stdinIsPiped() {
+#ifdef Q_OS_UNIX
+  struct stat st;
+  return !isatty(STDIN_FILENO) && fstat(STDIN_FILENO, &st) == 0 &&
+         (S_ISFIFO(st.st_mode) || S_ISREG(st.st_mode));
+#else
+  return false;
+#endif
+}
+
+QByteArray readStdin() {
+  QFile in;
+  if (!in.open(stdin, QIODevice::ReadOnly))
+    return {};
+  return in.readAll(); // until the writer closes the pipe
 }
 
 // --help and --version only print text, so answer them before starting the
@@ -105,9 +134,21 @@ int main(int argc, char *argv[]) {
   setUpParser(parser);
   parser.process(app);
   const QStringList args = parser.positionalArguments();
+  // "-" for standard input only on its own: an image from a pipe has no
+  // folder or list to browse.
+  const bool useStdin =
+      args == QStringList{"-"} || (args.isEmpty() && stdinIsPiped());
+  if (!useStdin && args.contains("-")) {
+    std::fprintf(stderr,
+                 "imgview: \"-\" (standard input) can't be combined with "
+                 "other paths\n");
+    return 2;
+  }
 
-  ImageViewer viewer(args.size() == 1 ? args.first() : QString());
-  if (args.size() > 1)
+  ImageViewer viewer(args.size() == 1 && !useStdin ? args.first() : QString());
+  if (useStdin)
+    viewer.openStdinData(readStdin());
+  else if (args.size() > 1)
     viewer.openPaths(args);
   app.openFiles = [&viewer](const QStringList &paths) {
     viewer.openPaths(paths);

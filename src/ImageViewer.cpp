@@ -980,9 +980,10 @@ void ImageViewer::pasteImage() {
   m_imagePath.clear();
   m_folderIndex = -1;
   m_folderCount = 0;
-  m_pasted = true;
-  m_pastedType = type;
-  m_pastedData = data;
+  m_inMemory = true;
+  m_fromStdin = false;
+  m_memoryType = type;
+  m_memoryData = data;
   m_label->setPixmap(image); // keeps interpolation/invert/gamma settings
   refreshInfoPanel();
   updateWindowTitle();
@@ -991,6 +992,47 @@ void ImageViewer::pasteImage() {
                                .arg(image.height())
                                .arg(type.isEmpty() ? "" : " (" + type + ")"),
                            3000);
+}
+
+// `imgview -`, or data piped in with no paths, e.g.
+// `magick in.png -negate png:- | imgview`. The format is detected from the
+// data. Its frames are read like a file's.
+void ImageViewer::openStdinData(const QByteArray &data) {
+  stopPlayback();
+  m_list.clear();
+  m_folder.clear();
+  m_imagePath.clear();
+  m_folderIndex = -1;
+  m_folderCount = 0;
+  m_inMemory = true;
+  m_fromStdin = true;
+  m_memoryData = data;
+  // Each reader gets its own buffer over the shared bytes, kept until the
+  // frames are read.
+  std::vector<std::unique_ptr<QBuffer>> buffers;
+  auto makeReader = [&] {
+    buffers.push_back(std::make_unique<QBuffer>());
+    buffers.back()->setData(m_memoryData);
+    buffers.back()->open(QIODevice::ReadOnly);
+    return std::make_unique<QImageReader>(buffers.back().get());
+  };
+  m_memoryType = QString::fromLatin1(makeReader()->format());
+  const QList<QImage> frames =
+      data.isEmpty() ? QList<QImage>() : readFrames(makeReader, "Standard input");
+  if (frames.isEmpty()) {
+    const QString why = data.isEmpty()
+                            ? QString("No data on standard input")
+                            : QString("No image Qt can read on standard input "
+                                      "(%1 received)")
+                                  .arg(formatFileSize(data.size()));
+    std::fprintf(stderr, "imgview: %s\n", qPrintable(why));
+    m_label->clearImage();
+    m_label->setText(why);
+  } else {
+    m_label->setFrames(frames); // keeps interpolation/invert/gamma settings
+  }
+  refreshInfoPanel();
+  updateWindowTitle();
 }
 
 // Every file in the image's folder that Qt has a reader for (by extension,
@@ -1015,9 +1057,9 @@ QStringList ImageViewer::imageFilesIn(const QString &folder) {
 // images added to it later.
 void ImageViewer::openPath(const QString &path) {
   m_list.clear(); // back to browsing the folder
-  m_pasted = false;
-  m_pastedType.clear();
-  m_pastedData.clear();
+  m_inMemory = false;
+  m_memoryType.clear();
+  m_memoryData.clear();
   if (!QFileInfo(path).isDir()) {
     loadImage(path);
     return;
@@ -1180,13 +1222,18 @@ void ImageViewer::saveView(bool chooseLocation) {
   const QRect region = m_label->visibleSourceRect().toAlignedRect();
 
   const QFileInfo source(m_imagePath);
-  QString dir = m_pasted ? QString() : source.absolutePath();
+  // From standard input: the current directory, where the command was run.
+  QString dir = !m_inMemory ? source.absolutePath()
+                : m_fromStdin ? QDir::currentPath()
+                              : QString();
   if (dir.isEmpty() || !QFileInfo(dir).isWritable()) {
     dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
     if (dir.isEmpty() || !QDir().mkpath(dir))
       dir = QDir::homePath();
   }
-  const QString stem = m_pasted ? QString("clipboard") : source.completeBaseName();
+  const QString stem = !m_inMemory ? source.completeBaseName()
+                     : m_fromStdin ? QString("stdin")
+                                   : QString("clipboard");
   QString path = uniquePath(dir, stem + "_view_" + tag);
 
   if (chooseLocation) {
@@ -1205,7 +1252,9 @@ void ImageViewer::saveView(bool chooseLocation) {
                                   .arg(region.y())
                                   .arg(region.width())
                                   .arg(region.height());
-  shot.setText("Source", m_pasted ? "clipboard" : m_imagePath);
+  shot.setText("Source", !m_inMemory ? m_imagePath
+                         : m_fromStdin ? QString("standard input")
+                                       : QString("clipboard"));
   shot.setText("Description", description);
   shot.setText("Software", "imgview " + QCoreApplication::applicationVersion());
 
@@ -1236,16 +1285,25 @@ static constexpr qint64 kFrameMemoryWarnBytes = 250LL * 1024 * 1024;
 static constexpr int kDefaultFrameDelayMs = 100;
 
 QList<QImage> ImageViewer::readFrames(const QString &path) {
+  return readFrames([&path] { return std::make_unique<QImageReader>(path); },
+                    QFileInfo(path).fileName());
+}
+
+QList<QImage> ImageViewer::readFrames(
+    const std::function<std::unique_ptr<QImageReader>()> &makeReader,
+    const QString &name) {
   m_animated = false;
   m_frameTotal = 0;
   m_frameDelays.clear();
-  QImageReader reader(path);
+  const std::unique_ptr<QImageReader> counter = makeReader();
+  QImageReader &reader = *counter;
   // Before anything else: the TIFF reader counts 1 page after other queries.
   const int count = reader.imageCount();
   if (count <= 1) {
-    // A QImage rather than a QPixmap, so a 16-bit image keeps its stored
+    // A single image, read with a new reader as before any queries. A
+    // QImage rather than a QPixmap, so a 16-bit image keeps its stored
     // values for the pixel value tooltips.
-    const QImage image(path);
+    const QImage image = makeReader()->read();
     if (image.isNull())
       return {};
     m_frameTotal = 1;
@@ -1263,7 +1321,7 @@ QList<QImage> ImageViewer::readFrames(const QString &path) {
     QMessageBox box(QMessageBox::Warning, "Large image",
                     QString("%1 has %2 %3 of %4 × %5 px. Decoding all of them "
                             "takes about %6 of memory.")
-                        .arg(QFileInfo(path).fileName())
+                        .arg(name)
                         .arg(count)
                         .arg(m_animated ? "frames" : "pages")
                         .arg(size.width())
@@ -1314,7 +1372,7 @@ QList<QImage> ImageViewer::readFrames(const QString &path) {
                                  .arg(reader.errorString()),
                              6000);
     std::fprintf(stderr, "imgview: %s: read only %d of %d frames: %s\n",
-                 QFile::encodeName(path).constData(), int(frames.size()),
+                 qPrintable(name), int(frames.size()),
                  toRead, qPrintable(reader.errorString()));
   }
   return frames;
@@ -1322,9 +1380,9 @@ QList<QImage> ImageViewer::readFrames(const QString &path) {
 
 void ImageViewer::loadImage(const QString &path) {
   stopPlayback();
-  m_pasted = false;
-  m_pastedType.clear();
-  m_pastedData.clear();
+  m_inMemory = false;
+  m_memoryType.clear();
+  m_memoryData.clear();
   m_imagePath = QFileInfo(path).absoluteFilePath();
   m_folder = QFileInfo(m_imagePath).absolutePath();
   const QList<QImage> frames = readFrames(m_imagePath);
@@ -1349,9 +1407,12 @@ void ImageViewer::loadImage(const QString &path) {
 }
 
 void ImageViewer::showAdjacentImage(int delta) {
-  if (m_pasted) {
+  if (m_inMemory) {
     statusBar()->showMessage(
-        "No previous or next image for a pasted image (O opens a file)", 3000);
+        QString("No previous or next image for %1 (O opens a file)")
+            .arg(m_fromStdin ? "an image from standard input"
+                             : "a pasted image"),
+        3000);
     return;
   }
   if (!m_list.isEmpty()) {
@@ -1542,11 +1603,12 @@ void ImageViewer::createInfoPanel() {
     form->addRow(new QLabel(QString("<b>%1</b>").arg(key)), valueLabel);
   };
 
-  if (m_pasted) {
-    addRow("Source:", m_pastedType.isEmpty()
-                          ? QString("Clipboard")
-                          : QString("Clipboard (%1)").arg(m_pastedType));
-    addRow("Data size:", formatFileSize(m_pastedData.size()));
+  if (m_inMemory) {
+    addRow("Source:", m_memoryType.isEmpty()
+                          ? memorySourceName()
+                          : QString("%1 (%2)").arg(memorySourceName(),
+                                                   m_memoryType));
+    addRow("Data size:", formatFileSize(m_memoryData.size()));
   } else {
     addRow("File size:", formatFileSize(QFileInfo(m_imagePath).size()));
   }
@@ -1635,12 +1697,12 @@ void ImageViewer::createInfoPanel() {
 
   // Nothing to read for an empty folder, or a pasted image without its
   // encoded data.
-  if (!m_imagePath.isEmpty() || !m_pastedData.isEmpty()) try {
+  if (!m_imagePath.isEmpty() || !m_memoryData.isEmpty()) try {
     auto image =
-        m_pasted ? Exiv2::ImageFactory::open(
+        m_inMemory ? Exiv2::ImageFactory::open(
                        reinterpret_cast<const Exiv2::byte *>(
-                           m_pastedData.constData()),
-                       m_pastedData.size())
+                           m_memoryData.constData()),
+                       m_memoryData.size())
                  : Exiv2::ImageFactory::open(m_imagePath.toUtf8().constData());
     // .get(): open() returns std::auto_ptr in Exiv2 0.27 (no bool
     // conversion) and std::unique_ptr in 0.28.
@@ -1753,7 +1815,7 @@ void ImageViewer::updateHints() {
 
 void ImageViewer::updateWindowTitle() {
   updateHints();
-  if (m_folder.isEmpty() && !m_pasted) { // nothing opened yet
+  if (m_folder.isEmpty() && !m_inMemory) { // nothing opened yet
     setWindowTitle("Image Viewer");
     if (m_viewInfoLabel)
       m_viewInfoLabel->setText("No image open");
@@ -1781,9 +1843,10 @@ void ImageViewer::updateWindowTitle() {
                 .arg(m_label->currentScale(), 0, 'f', 3);
   }
   QString file;
-  if (m_pasted)
-    file = m_pastedType.isEmpty() ? QString("Clipboard")
-                                  : QString("Clipboard (%1)").arg(m_pastedType);
+  if (m_inMemory)
+    file = m_memoryType.isEmpty()
+               ? memorySourceName()
+               : QString("%1 (%2)").arg(memorySourceName(), m_memoryType);
   else if (m_imagePath.isEmpty())
     file = QDir(m_folder).dirName() + "/";
   else

@@ -3,6 +3,7 @@
 #include "Resample.h"
 
 #include <QImage>
+#include <QImageReader>
 #include <QLabel>
 #include <QMainWindow>
 #include <QMap>
@@ -13,6 +14,9 @@
 #include <QStringList>
 #include <QTableWidget>
 #include <QTimer>
+
+#include <functional>
+#include <memory>
 
 class ScaledImageLabel;
 
@@ -33,6 +37,10 @@ public:
   // Show the image on the clipboard (e.g. copied in a web browser) from
   // memory, in place of any open image. ←/→ are off until a file is opened.
   void pasteImage();
+  // Show an image read from standard input (`imgview -`, or piped in with
+  // no paths), from memory like a pasted one; there's nothing to browse.
+  // An animation's frames can be stepped through as usual.
+  void openStdinData(const QByteArray &data);
   // Save the visible image area as shown; ask for the location or not.
   void saveView(bool chooseLocation);
 
@@ -74,6 +82,11 @@ private:
   // readFrames() decodes all of a file's frames (asking first if they'd
   // take a lot of memory) and sets the frame fields below.
   QList<QImage> readFrames(const QString &path);
+  // The same from any source: makeReader() returns a new reader positioned
+  // at the start of the image. `name` is used in messages.
+  QList<QImage> readFrames(
+      const std::function<std::unique_ptr<QImageReader>()> &makeReader,
+      const QString &name);
   void stepFrame(int delta);
   void goToFrame(int index); // pauses playback
   void togglePlayback();
@@ -90,7 +103,7 @@ private:
   QTimer m_playTimer;       // single shot, for the next frame
 
   QString m_imagePath; // empty when a folder with no images was opened,
-                       // or for a pasted image
+                       // or for an image held in memory
   QString m_folder;    // absolute path of the folder being browsed; empty
                        // until something has been opened
   // Set when several paths were given: ←/→ step through these (absolute
@@ -98,13 +111,19 @@ private:
   QStringList m_list;
   int m_folderIndex = -1; // position of m_imagePath in its folder or the
   int m_folderCount = 0;  // list, 0-based, and the number of images there
-  // While a pasted image is shown: the clipboard MIME type it was read as
-  // (e.g. "image/png"), and its encoded bytes, kept for the info panel's
-  // data size and metadata. Both are empty if the clipboard only offered an
-  // already decoded image.
-  bool m_pasted = false;
-  QString m_pastedType;
-  QByteArray m_pastedData;
+  // While an image held in memory is shown (pasted, or read from standard
+  // input): where it came from, "Clipboard" or "stdin"; the type it was
+  // read as (e.g. "image/png" from the clipboard, "png" from stdin); and its
+  // encoded bytes, kept for the info panel's data size and metadata. The
+  // type and data are empty if the clipboard only offered an already
+  // decoded image.
+  bool m_inMemory = false;
+  bool m_fromStdin = false;
+  QString memorySourceName() const {
+    return m_fromStdin ? "stdin" : "Clipboard";
+  }
+  QString m_memoryType;
+  QByteArray m_memoryData;
   ScaledImageLabel *m_label = nullptr;
   QWidget *m_infoPanel = nullptr;
   // Key reference on the left, created on first use. m_helpLabel holds its
