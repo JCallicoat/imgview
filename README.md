@@ -373,8 +373,10 @@ If a build fails after tagging, fix it, then move the tag to the fixed commit (`
 
 ```
 src/main.cpp                    Entry point: options, macOS open events
-src/ImageViewer.h/.cpp          Main window (info and help panels, keys, title, status bar)
-                                and the zoomable, pannable image view
+src/ImageViewer.h/.cpp          Main window: loading (files, folders, frames, clipboard,
+                                standard input), info and help panels, keys, title, status bar
+src/ScaledImageLabel.h/.cpp     The zoomable, pannable image view: resampling, stretch and
+                                high-pass, tone adjustments, frames, pixel value tooltips
 src/Resample.h/.cpp             Nearest, bicubic and Lanczos3 resamplers, contrast stretch, high-pass, tone adjustments (invert/gamma tables, saturation, false color)
 src/ColorMaps.h                 False color tables (inferno, viridis)
 data/imgview.desktop.in         Desktop entry template (installed as imgview.desktop)

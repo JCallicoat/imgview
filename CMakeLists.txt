@@ -21,6 +21,7 @@ find_package(exiv2 REQUIRED CONFIG NAMES exiv2)
 set(IMGVIEW_SOURCES
     src/main.cpp
     src/ImageViewer.cpp
+    src/ScaledImageLabel.cpp
     src/Resample.cpp
 )
 
