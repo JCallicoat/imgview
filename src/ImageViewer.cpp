@@ -1979,76 +1979,90 @@ void ImageViewer::updateHelpPanel() {
     const char *keys; // empty for a section heading
     const char *action;
     QString value;
+    bool active = false; // not at its default: the value is shown bold
   };
-  const Row rows[] = {
+  // Short labels; the README and man page list each setting's steps.
+  // Shift variants are written as capitals (H for Shift+h).
+  const bool frames = m_label->frameCount() > 1;
+  const auto interp = m_label->interpolation();
+  const auto falseColor = m_label->falseColor();
+  const bool vibrance = m_label->saturationMode() == SaturationMode::Vibrance;
+  const QList<Row> rows = {
       {"", "View", {}},
-      {"+ =  -", "Zoom in, out (wheel: at the pointer)", {}},
-      {"0", "Fit to the window", {}},
-      {"r", "Zoom to 1:1", {}},
-      {"← ↑ → ↓", "Pan; drag also pans", {}},
-      {"Shift+arrows", "Pan by one image pixel", {}},
-      {"p", "Pixel value tooltip on hover", m_label->pixelTips() ? "on" : "off"},
-      {"i", "Zoom-in resampling: nearest, bicubic, lanczos3",
-       ScaledImageLabel::interpolationName(m_label->interpolation())},
+      {"+ - =", "Zoom (wheel: at pointer)", {}},
+      {"0  r", "Fit, 1:1", {}},
+      {"arrows", "Pan (Shift: 1 px)", {}},
+      {"p", "Pixel values", m_label->pixelTips() ? "on" : "off",
+       m_label->pixelTips()},
+      {"i", "Resampling", ScaledImageLabel::interpolationName(interp),
+       interp != ScaledImageLabel::Interpolation::Nearest},
       {"", "Tone", {}},
-      {"z  x", "Contrast less (squash), more (stretch)",
-       m_label->stretchName()},
-      {"c", "Contrast stretch or squash off", {}},
-      {"h", "High-pass: off, 1, 2, 4, 8, 16 px",
+      {"z x c", "Contrast −, +, off", m_label->stretchName(),
+       m_label->stretchStep() != 0},
+      {"h H", "High-pass ±",
        m_label->highPassStep() == 0
            ? QString("off")
-           : QString("%1 px").arg(m_label->highPassRadius())},
-      {"Shift+h", "High-pass, the other way", {}},
-      {"n", "Invert colors", m_label->isInverted() ? "on" : "off"},
-      {".  ,", "Gamma up (darker), down", QString::number(m_label->gamma(), 'f', 2)},
-      {"/", "Reset gamma", {}},
-      {";  l", "Saturation up, down",
-       QString("%1%").arg(m_label->saturationPercent())},
-      {"'", "Reset saturation", {}},
-      {"b", "Saturation mode: linear, vibrance",
-       m_label->saturationMode() == SaturationMode::Vibrance ? "vibrance"
-                                                              : "linear"},
-      {"k", "False color: off, inferno, viridis",
-       ScaledImageLabel::falseColorName(m_label->falseColor())},
-      {"Shift+k", "False color, the other way", {}},
-      {"Backspace", "Reset all tone settings above", {}},
+           : QString("%1 px").arg(m_label->highPassRadius()),
+       m_label->highPassStep() != 0},
+      {"n", "Invert", m_label->isInverted() ? "on" : "off",
+       m_label->isInverted()},
+      {". , /", "Gamma ±, reset", QString::number(m_label->gamma(), 'f', 2),
+       m_label->gammaStep() != 0},
+      {"; l '", "Saturation ±, reset",
+       QString("%1%").arg(m_label->saturationPercent()),
+       m_label->saturationStep() != 0},
+      {"b", "Saturation mode", vibrance ? "vibrance" : "linear", vibrance},
+      {"k K", "False color ±", ScaledImageLabel::falseColorName(falseColor),
+       falseColor != ScaledImageLabel::FalseColor::Off},
+      {"Backspace", "Reset tone", {}},
       {"", "Images", {}},
-      {"← →", "Previous, next image (when it fits)", {}},
-      {"PgUp  PgDn", "Previous, next image (always)", {}},
-      {"o", "Open an image", {}},
-      {"Ctrl+V", "Paste an image (e.g. copied in a browser)", {}},
-      {"s", "Save the view as PNG", {}},
-      {"Shift+s", "Save the view as…", {}},
-      {"", "Animations and multi-page images", {}},
-      {"← →", "Previous, next frame (when it fits)",
-       m_label->frameCount() > 1 ? QString("%1/%2")
-                                       .arg(m_label->frameIndex() + 1)
-                                       .arg(m_label->frameCount())
-                                 : QString()},
-      {"Home  End", "First, last frame", {}},
-      {"Space", "Play, pause",
-       m_label->frameCount() > 1 ? (m_playing ? "playing" : "paused")
-                                 : QString()},
-      {"", "Window", {}},
-      {"m", "Info panel", {}},
-      {"f", "Fullscreen", {}},
-      {"?", "This help", {}},
-      {"Esc", "Close help, leave fullscreen, or quit", {}},
-      {"q", "Quit", {}},
   };
+  QList<Row> all = rows;
+  if (!frames) // ←/→ step frames in an animation
+    all += Row{"← →", "Previous, next (if it fits)", {}};
+  all += QList<Row>{
+      {"PgUp PgDn", "Previous, next", {}},
+      {"o  Ctrl+V", "Open, paste", {}},
+      {"s S", "Save view, save as…", {}},
+  };
+  if (frames)
+    all += QList<Row>{
+        {"", "Frames", {}},
+        {"← →", "Previous, next",
+         QString("%1/%2").arg(m_label->frameIndex() + 1).arg(m_label->frameCount())},
+        {"Home End", "First, last", {}},
+        {"Space", "Play, pause", m_playing ? "playing" : "paused", m_playing},
+    };
+  all += QList<Row>{
+      {"", "Window", {}},
+      {"m f ?", "Info, fullscreen, help", {}},
+      {"Esc q", "Close or exit, quit", {}},
+  };
+  // Descriptions a little dimmer than the keys and values, so the key
+  // column is easy to scan down.
+  const QPalette pal = m_helpLabel->palette();
+  const QColor fg = pal.color(QPalette::WindowText);
+  const QColor bg = pal.color(QPalette::Window);
+  const QString dim =
+      QColor::fromRgbF(0.72f * fg.redF() + 0.28f * bg.redF(),
+                       0.72f * fg.greenF() + 0.28f * bg.greenF(),
+                       0.72f * fg.blueF() + 0.28f * bg.blueF())
+          .name();
   QString html = "<table cellspacing='0' cellpadding='3'>";
-  for (const Row &row : rows) {
+  for (const Row &row : all) {
     if (!*row.keys) {
       html += QString("<tr><td colspan='3' style='padding-top: 10px'>"
                       "<b>%1</b></td></tr>")
                   .arg(row.action);
       continue;
     }
+    const QString value = row.value.toHtmlEscaped();
     html += QString("<tr><td style='padding-right: 12px'><b>%1</b></td>"
-                    "<td>%2</td><td width='70' align='right'>%3</td></tr>")
-                .arg(QString(row.keys).toHtmlEscaped(),
+                    "<td style='color: %2'>%3</td>"
+                    "<td width='70' align='right'>%4</td></tr>")
+                .arg(QString(row.keys).toHtmlEscaped(), dim,
                      QString(row.action).toHtmlEscaped(),
-                     row.value.toHtmlEscaped());
+                     row.active ? "<b>" + value + "</b>" : value);
   }
   html += "</table>";
   if (html != m_helpLabel->text()) {

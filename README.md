@@ -89,7 +89,7 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | `Esc` | Close the help panel, or leave fullscreen, or quit |
 | `Q` | Quit |
 
-**Help panel:** `?` opens a panel on the left listing every key, with the current resampling mode, stretch, high-pass radius, inversion, gamma, saturation and false color map beside their keys. All keys keep working while it's open, so you can try a key and watch its effect; `?` or `Esc` closes it.
+**Help panel:** `?` opens a compact panel on the left listing every key (`H`, `K` and `S` there mean `Shift` + `H` and so on), with the current resampling mode, stretch, high-pass radius, inversion, gamma, saturation and false color map beside their keys, in bold when not at their default, so you can see at a glance what's changing the image. The frame keys are listed only while an animation or multi-page image is open. All keys keep working while it's open, so you can try a key and watch its effect; `?` or `Esc` closes it.
 
 **Status bar:** hints for the most used keys (cut off from the right when the window is narrow, so `help: ?` stays visible); in fullscreen, the title's file and view info on the right (see below). Changing a view setting shows the new value there for two seconds, e.g. `Saturation 336%`, or `Gamma 8.00 (maximum)` at a limit.
 
