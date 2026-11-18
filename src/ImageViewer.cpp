@@ -1561,7 +1561,7 @@ void ImageViewer::stepSaturation(int delta) {
   statusBar()->showMessage(message, kSettingMessageMs);
 }
 
-// X / C: less / more contrast stretch. The message gives the black and
+// Z / X: less / more contrast stretch. The message gives the black and
 // white points, in the image's own values (16-bit for a deeper image).
 void ImageViewer::stepStretch(int delta) {
   const int before = m_label->stretchStep();
@@ -1716,9 +1716,9 @@ void ImageViewer::updateHelpPanel() {
       {"i", "Zoom-in resampling: nearest, bicubic, lanczos3",
        ScaledImageLabel::interpolationName(m_label->interpolation())},
       {"", "Tone", {}},
-      {"x  c", "Contrast less (squash), more (stretch)",
+      {"z  x", "Contrast less (squash), more (stretch)",
        m_label->stretchName()},
-      {"v", "Contrast stretch or squash off", {}},
+      {"c", "Contrast stretch or squash off", {}},
       {"h", "High-pass: off, 1, 2, 4, 8, 16 px",
        m_label->highPassStep() == 0
            ? QString("off")
@@ -1859,19 +1859,19 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
   case Qt::Key_B:
     toggleSaturationMode();
     return true;
-  // Not with Ctrl, so Ctrl+C / Ctrl+X still copy and cut, e.g. in the
-  // metadata table. (Ctrl+V is handled above.)
+  // Not with Ctrl, so Ctrl+Z / Ctrl+X / Ctrl+C still undo, cut and copy,
+  // e.g. in the metadata table.
+  case Qt::Key_Z:
   case Qt::Key_X:
   case Qt::Key_C:
-  case Qt::Key_V:
     if (event->modifiers() & Qt::ControlModifier)
       return false;
-    if (event->key() == Qt::Key_V) {
+    if (event->key() == Qt::Key_C) {
       m_label->setStretchStep(0);
       statusBar()->showMessage("Contrast stretch and squash off",
                                kSettingMessageMs);
     } else {
-      stepStretch(event->key() == Qt::Key_C ? 1 : -1);
+      stepStretch(event->key() == Qt::Key_X ? 1 : -1);
     }
     return true;
   case Qt::Key_H: // Shift+H: the other way round
