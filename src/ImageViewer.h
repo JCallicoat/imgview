@@ -6,13 +6,10 @@
 #include <QImageReader>
 #include <QLabel>
 #include <QMainWindow>
-#include <QMap>
-#include <QPixmap>
 #include <QPointF>
 #include <QScrollArea>
 #include <QString>
 #include <QStringList>
-#include <QTableWidget>
 #include <QTimer>
 
 #include <functional>
@@ -67,6 +64,12 @@ private:
   void toggleHelpPanel();
   void updateHelpPanel();
   void updateWindowTitle();
+  // A setting that's on, as shown in the title ("γ 1.68"), described in a
+  // saved view's PNG text ("gamma 1.68") and tagged in its name ("g1.68").
+  struct ActiveSetting {
+    QString title, description, tag;
+  };
+  QList<ActiveSetting> activeSettings() const;
   void updateHints(); // the status bar's key hints, for the image shown
 
   // Image loading and folder navigation.
@@ -80,13 +83,26 @@ private:
   // Frames of an animation or multi-page file: ←/→ step through them,
   // Home/End go to the first and last, Space plays and pauses.
   // readFrames() decodes all of a file's frames (asking first if they'd
-  // take a lot of memory) and sets the frame fields below.
-  QList<QImage> readFrames(const QString &path);
+  // take a lot of memory); showFrames() shows them.
+  struct LoadedFrames {
+    QList<QImage> images; // empty if nothing could be read
+    QList<int> delays;    // ms per frame, 0 when not given
+    bool animated = false; // an animation, not pages of a document
+    int total = 0;         // frames in the source; more than read if only
+                           // the first was
+    QByteArray format;     // the reader's format, e.g. "png"
+  };
+  LoadedFrames readFrames(const QString &path);
+  LoadedFrames readFramesFromData(const QByteArray &data,
+                                  const QByteArray &format, const QString &name);
   // The same from any source: makeReader() returns a new reader positioned
   // at the start of the image. `name` is used in messages.
-  QList<QImage> readFrames(
+  LoadedFrames readFrames(
       const std::function<std::unique_ptr<QImageReader>()> &makeReader,
       const QString &name);
+  void showFrames(LoadedFrames frames); // sets the frame fields below
+  void showMemoryImage(LoadedFrames frames, bool fromStdin, const QString &type,
+                       const QByteArray &data);
   void stepFrame(int delta);
   void goToFrame(int index); // pauses playback
   void togglePlayback();
@@ -154,15 +170,14 @@ public:
   QString resamplingName() const;
 
   explicit ScaledImageLabel(QWidget *parent = nullptr);
-  void setPixmap(const QPixmap &pixmap);
 
-  void setPixmap(const QImage &image);
-
-  // A multi-frame image (an animation or a multi-page file), shown from the
-  // first frame. Like setPixmap(), it resets the zoom. The contrast stretch is worked out from all frames together,
-  // and the high-pass keeps one gain for all frames, so a frame doesn't look
+  // Show an image: its frames (one for a still image; more for an
+  // animation or a multi-page file), from the first, fitted to the window.
+  // Moved in, each frame is converted in place without a second copy. The
+  // contrast stretch is worked out from all frames together, and the
+  // high-pass keeps one gain for all frames, so a frame doesn't look
   // brighter or more detailed than another just from the processing.
-  void setFrames(const QList<QImage> &frames);
+  void setFrames(QList<QImage> frames);
   int frameCount() const { return int(m_frames.size()); } // 0 if none
   int frameIndex() const { return m_frameIndex; }
   // Show another frame, keeping the zoom and position (unless its size
@@ -293,6 +308,8 @@ private:
   void resetView();
   void showFrame(int index); // sets m_source and its flags, no repaint
   void updateProcessed();
+  void reprocess();          // updateProcessed(), then redraw
+  QRectF visibleArea() const;
   QString pixelTipText(const QPoint &pixel) const;
   // Whether the view is drawn from the area-averaged downscale rather than
   // the selected resampler: at or below one image pixel per device pixel.

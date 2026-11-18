@@ -61,6 +61,13 @@ else()
   target_link_libraries(imgview PRIVATE exiv2lib)
 endif()
 
+# Only record the shared libraries imgview calls into: Qt's CMake targets
+# also pull in libGLX and libOpenGL, which it never uses. Many distributions'
+# toolchains do this by default; not all do.
+if(UNIX AND NOT APPLE)
+  target_link_options(imgview PRIVATE LINKER:--as-needed)
+endif()
+
 target_compile_definitions(imgview PRIVATE
     IMGVIEW_VERSION="${PROJECT_VERSION}")
 

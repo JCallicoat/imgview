@@ -1,12 +1,10 @@
-
-
 #include "ImageViewer.h"
 #include "Resample.h"
+
 #include <QApplication>
 #include <QBuffer>
 #include <QClipboard>
 #include <QCursor>
-#include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFileDialog>
@@ -28,8 +26,9 @@
 #include <QScrollBar>
 #include <QStandardPaths>
 #include <QStatusBar>
-#include <QToolTip>
+#include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QToolTip>
 #include <QVBoxLayout>
 #include <QWheelEvent>
 #include <QWidget>
@@ -200,24 +199,16 @@ void ScaledImageLabel::markInteracting() {
   m_refineTimer.start(); // restarts if already running
 }
 
-void ScaledImageLabel::setPixmap(const QPixmap &pixmap) {
-  setPixmap(pixmap.toImage());
-}
-
-void ScaledImageLabel::setPixmap(const QImage &image) {
-  setFrames({image});
-}
-
-void ScaledImageLabel::setFrames(const QList<QImage> &frames) {
+void ScaledImageLabel::setFrames(QList<QImage> frames) {
   QLabel::setText(QString()); // drop any earlier "Failed to load" message
   // Stored as decoded if deeper than 8 bits or with alpha (see m_source),
-  // otherwise as ARGB32_Premultiplied, which keeps the values.
-  m_frames.clear();
-  m_frames.reserve(frames.size());
-  for (const QImage &image : frames)
-    m_frames << (isDeepFormat(image.format()) || image.hasAlphaChannel()
-                     ? image
-                     : image.convertToFormat(QImage::Format_ARGB32_Premultiplied));
+  // otherwise as ARGB32_Premultiplied, which keeps the values. Converted in
+  // place, so with the frames moved in each decoded frame is freed as soon
+  // as it's converted, rather than all of them being held twice.
+  for (QImage &image : frames)
+    if (!isDeepFormat(image.format()) && !image.hasAlphaChannel())
+      image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+  m_frames = std::move(frames);
   m_stretchHistogram.clear();
   m_sharedHighPassLimit = 0.0;
   showFrame(0);
@@ -239,13 +230,17 @@ void ScaledImageLabel::setFrame(int index) {
     return;
   const QSize oldSize = m_source.size();
   showFrame(index);
+  reprocess();
+  if (m_source.size() != oldSize) // pages of a TIFF can differ in size
+    resetView();
+}
+
+// After a change to the frame shown or the stretch or high-pass settings:
+// rebuild m_original and drop the renders made from the old one.
+void ScaledImageLabel::reprocess() {
   updateProcessed();
   m_scaledCache = QImage();
   m_viewportCache = QImage();
-  if (m_source.size() != oldSize) { // pages of a TIFF can differ in size
-    resetView();
-    return;
-  }
   update();
   emit viewChanged();
 }
@@ -301,11 +296,7 @@ void ScaledImageLabel::setHighPassStep(int step) {
     return;
   m_highPassStep = step;
   m_sharedHighPassLimit = 0.0; // a new gain for the new values
-  updateProcessed();
-  m_scaledCache = QImage();
-  m_viewportCache = QImage();
-  update();
-  emit viewChanged();
+  reprocess();
 }
 
 double ScaledImageLabel::stretchClipPercent() const {
@@ -332,11 +323,7 @@ void ScaledImageLabel::setStretchStep(int step) {
     return;
   m_stretchStep = step;
   m_sharedHighPassLimit = 0.0; // a new gain for the new values
-  updateProcessed();
-  m_scaledCache = QImage();
-  m_viewportCache = QImage();
-  update();
-  emit viewChanged();
+  reprocess();
 }
 
 void ScaledImageLabel::clearImage() {
@@ -461,8 +448,7 @@ void ScaledImageLabel::paintEvent(QPaintEvent *event) {
     // Zoomed in: resample only the visible part of the original, at
     // device-pixel resolution. Memory use doesn't grow with zoom.
     m_scaledCache = QImage();
-    const QRectF target(m_offset, scaledSize());
-    const QRectF visible = target.intersected(QRectF(rect()));
+    const QRectF visible = visibleArea();
     if (visible.isEmpty())
       return;
 
@@ -533,11 +519,15 @@ void ScaledImageLabel::paintEvent(QPaintEvent *event) {
   }
 }
 
+// The part of the widget the image covers, in logical pixels.
+QRectF ScaledImageLabel::visibleArea() const {
+  return QRectF(m_offset, scaledSize()).intersected(QRectF(rect()));
+}
+
 QRectF ScaledImageLabel::visibleSourceRect() const {
   if (m_original.isNull())
     return {};
-  const QRectF target(m_offset, scaledSize());
-  const QRectF visible = target.intersected(QRectF(rect()));
+  const QRectF visible = visibleArea();
   const double scale = currentScale();
   return QRectF((visible.topLeft() - m_offset) / scale, visible.size() / scale);
 }
@@ -560,8 +550,7 @@ QImage ScaledImageLabel::renderVisible() {
     if (m_scaledCache.isNull())
       return {};
     const QImage &full = forDisplay(m_scaledCache);
-    const QRectF target(m_offset, scaledSize());
-    const QRectF visible = target.intersected(QRectF(rect()));
+    const QRectF visible = visibleArea();
     const QRect src = QRectF((visible.topLeft() - m_offset) * dpr,
                              visible.size() * dpr)
                           .toAlignedRect()
@@ -935,104 +924,84 @@ void ImageViewer::showOpenDialog() {
 // Ctrl+V. The clipboard's image types are tried in the order it offers them
 // (the source's preference; browsers offer image/png for a copied image),
 // each with Qt's reader for that type, or detected from the data if Qt has
-// none registered under that name. If none can be read, an image the
-// clipboard offers already decoded is used. Without any image on the
-// clipboard, the open image stays.
+// none registered under that name. An animation's frames are all read. If
+// none can be read, an image the clipboard offers already decoded is used.
+// Without any image on the clipboard, the open image stays.
 void ImageViewer::pasteImage() {
   const QMimeData *mime = QApplication::clipboard()->mimeData();
-  QImage image;
-  QString type;
-  QByteArray data;
   if (mime) {
-    for (const QString &format : mime->formats()) {
-      if (!format.startsWith("image/"))
+    for (const QString &type : mime->formats()) {
+      if (!type.startsWith("image/"))
         continue;
-      QByteArray bytes = mime->data(format);
+      const QByteArray bytes = mime->data(type);
       if (bytes.isEmpty())
         continue;
-      QBuffer buffer(&bytes);
-      QImageReader reader(&buffer);
-      const QList<QByteArray> readers =
-          QImageReader::imageFormatsForMimeType(format.toLatin1());
-      if (!readers.isEmpty())
-        reader.setFormat(readers.first()); // also falls back to detection
-      image = reader.read();
-      if (!image.isNull()) {
-        type = format;
-        data = bytes;
-        break;
+      LoadedFrames frames = readFramesFromData(
+          bytes, QImageReader::imageFormatsForMimeType(type.toLatin1()).value(0),
+          "The clipboard image");
+      if (!frames.images.isEmpty()) {
+        showMemoryImage(std::move(frames), false, type, bytes);
+        return;
       }
     }
-    if (image.isNull() && mime->hasImage())
-      image = qvariant_cast<QImage>(mime->imageData());
+    if (mime->hasImage()) {
+      const QImage image = qvariant_cast<QImage>(mime->imageData());
+      if (!image.isNull()) {
+        LoadedFrames frames;
+        frames.images = {image};
+        frames.total = 1;
+        showMemoryImage(std::move(frames), false, {}, {});
+        return;
+      }
+    }
   }
-  if (image.isNull()) {
-    statusBar()->showMessage("No image on the clipboard", 3000);
-    return;
-  }
-
-  stopPlayback();
-  m_animated = false;
-  m_frameTotal = 1;
-  m_frameDelays.clear();
-  m_list.clear();
-  m_folder.clear();
-  m_imagePath.clear();
-  m_folderIndex = -1;
-  m_folderCount = 0;
-  m_inMemory = true;
-  m_fromStdin = false;
-  m_memoryType = type;
-  m_memoryData = data;
-  m_label->setPixmap(image); // keeps interpolation/invert/gamma settings
-  refreshInfoPanel();
-  updateWindowTitle();
-  statusBar()->showMessage(QString("Pasted %1 × %2 image%3")
-                               .arg(image.width())
-                               .arg(image.height())
-                               .arg(type.isEmpty() ? "" : " (" + type + ")"),
-                           3000);
+  statusBar()->showMessage("No image on the clipboard", 3000);
 }
 
 // `imgview -`, or data piped in with no paths, e.g.
 // `magick in.png -negate png:- | imgview`. The format is detected from the
-// data. Its frames are read like a file's.
+// data.
 void ImageViewer::openStdinData(const QByteArray &data) {
-  stopPlayback();
-  m_list.clear();
-  m_folder.clear();
-  m_imagePath.clear();
-  m_folderIndex = -1;
-  m_folderCount = 0;
-  m_inMemory = true;
-  m_fromStdin = true;
-  m_memoryData = data;
-  // Each reader gets its own buffer over the shared bytes, kept until the
-  // frames are read.
-  std::vector<std::unique_ptr<QBuffer>> buffers;
-  auto makeReader = [&] {
-    buffers.push_back(std::make_unique<QBuffer>());
-    buffers.back()->setData(m_memoryData);
-    buffers.back()->open(QIODevice::ReadOnly);
-    return std::make_unique<QImageReader>(buffers.back().get());
-  };
-  m_memoryType = QString::fromLatin1(makeReader()->format());
-  const QList<QImage> frames =
-      data.isEmpty() ? QList<QImage>() : readFrames(makeReader, "Standard input");
-  if (frames.isEmpty()) {
+  LoadedFrames frames;
+  if (!data.isEmpty())
+    frames = readFramesFromData(data, {}, "Standard input");
+  const bool failed = frames.images.isEmpty();
+  const QString type = QString::fromLatin1(frames.format);
+  showMemoryImage(std::move(frames), true, type, data);
+  if (failed) {
     const QString why = data.isEmpty()
                             ? QString("No data on standard input")
                             : QString("No image Qt can read on standard input "
                                       "(%1 received)")
                                   .arg(formatFileSize(data.size()));
     std::fprintf(stderr, "imgview: %s\n", qPrintable(why));
-    m_label->clearImage();
     m_label->setText(why);
-  } else {
-    m_label->setFrames(frames); // keeps interpolation/invert/gamma settings
   }
+}
+
+// An image held in memory, pasted or from standard input, in place of any
+// open image. There's nothing to browse; ←/→ only step through its frames.
+void ImageViewer::showMemoryImage(LoadedFrames frames, bool fromStdin,
+                                  const QString &type, const QByteArray &data) {
+  m_list.clear();
+  m_folder.clear();
+  m_imagePath.clear();
+  m_folderIndex = -1;
+  m_folderCount = 0;
+  m_inMemory = true;
+  m_fromStdin = fromStdin;
+  m_memoryType = type;
+  m_memoryData = data;
+  showFrames(std::move(frames));
   refreshInfoPanel();
   updateWindowTitle();
+  if (!fromStdin && m_label->frameCount() > 0)
+    statusBar()->showMessage(
+        QString("Pasted %1 × %2 image%3")
+            .arg(m_label->originalSize().width())
+            .arg(m_label->originalSize().height())
+            .arg(type.isEmpty() ? "" : " (" + type + ")"),
+        3000);
 }
 
 // Every file in the image's folder that Qt has a reader for (by extension,
@@ -1070,13 +1039,10 @@ void ImageViewer::openPath(const QString &path) {
     loadImage(QDir(m_folder).filePath(files.first()));
     return;
   }
-  stopPlayback();
   m_imagePath.clear();
   m_folderIndex = -1;
   m_folderCount = 0;
-  m_frameTotal = 0;
-  m_frameDelays.clear();
-  m_label->clearImage();
+  showFrames({});
   m_label->setText(QString("No images found in folder:\n%1").arg(m_folder));
   refreshInfoPanel();
   updateWindowTitle();
@@ -1182,42 +1148,9 @@ void ImageViewer::saveView(bool chooseLocation) {
           tag;
     settings = QString("frame %1/%2, ").arg(frame).arg(count) + settings;
   }
-  if (m_label->stretchStep() > 0) {
-    const QString clip = QString::number(m_label->stretchClipPercent());
-    tag += "_st" + clip;
-    settings += ", stretch " + clip + "%";
-  } else if (m_label->stretchStep() < 0) {
-    const QString squash = QString::number(m_label->squashPercent());
-    tag += "_sq" + squash;
-    settings += ", squash " + squash + "%";
-  }
-  if (m_label->highPassStep() != 0) {
-    const QString radius = QString::number(m_label->highPassRadius());
-    tag += "_hp" + radius;
-    settings += ", high-pass " + radius + " px";
-  }
-  if (m_label->isInverted()) {
-    tag += "_inv";
-    settings += ", inverted";
-  }
-  if (m_label->gammaStep() != 0) {
-    const QString g = QString::number(m_label->gamma(), 'f', 2);
-    tag += "_g" + g;
-    settings += ", gamma " + g;
-  }
-  // The saturation change isn't applied while false color is on.
-  const bool falseColor =
-      m_label->falseColor() != ScaledImageLabel::FalseColor::Off;
-  if (m_label->saturationStep() != 0 && !falseColor) {
-    const QString name = m_label->saturationModeName(); // "saturation" or "vibrance"
-    const QString sat = QString::number(m_label->saturationPercent());
-    tag += "_" + name.left(3) + sat; // e.g. "_sat168", "_vib168"
-    settings += ", " + name + " " + sat + "%";
-  }
-  if (falseColor) {
-    const QString map = ScaledImageLabel::falseColorName(m_label->falseColor());
-    tag += "_" + map;
-    settings += ", false color " + map;
+  for (const ActiveSetting &setting : activeSettings()) {
+    tag += "_" + setting.tag;
+    settings += ", " + setting.description;
   }
   const QRect region = m_label->visibleSourceRect().toAlignedRect();
 
@@ -1284,33 +1217,53 @@ static constexpr qint64 kFrameMemoryWarnBytes = 250LL * 1024 * 1024;
 // as web browsers do for GIFs; also for pages of a document played through.
 static constexpr int kDefaultFrameDelayMs = 100;
 
-QList<QImage> ImageViewer::readFrames(const QString &path) {
+ImageViewer::LoadedFrames ImageViewer::readFrames(const QString &path) {
   return readFrames([&path] { return std::make_unique<QImageReader>(path); },
                     QFileInfo(path).fileName());
 }
 
-QList<QImage> ImageViewer::readFrames(
+// `format` is a reader format to try first (e.g. "png"); empty to detect it
+// from the data. Each reader gets its own buffer over the shared bytes.
+ImageViewer::LoadedFrames
+ImageViewer::readFramesFromData(const QByteArray &data, const QByteArray &format,
+                                const QString &name) {
+  std::vector<std::unique_ptr<QBuffer>> buffers; // kept until all is read
+  return readFrames(
+      [&] {
+        buffers.push_back(std::make_unique<QBuffer>());
+        buffers.back()->setData(data);
+        buffers.back()->open(QIODevice::ReadOnly);
+        auto reader = std::make_unique<QImageReader>(buffers.back().get());
+        if (!format.isEmpty())
+          reader->setFormat(format); // also falls back to detection
+        return reader;
+      },
+      name);
+}
+
+ImageViewer::LoadedFrames ImageViewer::readFrames(
     const std::function<std::unique_ptr<QImageReader>()> &makeReader,
     const QString &name) {
-  m_animated = false;
-  m_frameTotal = 0;
-  m_frameDelays.clear();
+  LoadedFrames result;
   const std::unique_ptr<QImageReader> counter = makeReader();
   QImageReader &reader = *counter;
   // Before anything else: the TIFF reader counts 1 page after other queries.
   const int count = reader.imageCount();
+  result.format = reader.format();
   if (count <= 1) {
     // A single image, read with a new reader as before any queries. A
     // QImage rather than a QPixmap, so a 16-bit image keeps its stored
     // values for the pixel value tooltips.
     const QImage image = makeReader()->read();
-    if (image.isNull())
-      return {};
-    m_frameTotal = 1;
-    return {image};
+    if (!image.isNull()) {
+      result.images = {image};
+      result.total = 1;
+    }
+    return result;
   }
-  m_animated = reader.supportsAnimation();
-  m_frameTotal = count;
+  const bool animated = reader.supportsAnimation();
+  result.animated = animated;
+  result.total = count;
 
   // Estimated at 4 bytes a pixel as decoded, or 8 for deeper formats.
   int toRead = count;
@@ -1323,7 +1276,7 @@ QList<QImage> ImageViewer::readFrames(
                             "takes about %6 of memory.")
                         .arg(name)
                         .arg(count)
-                        .arg(m_animated ? "frames" : "pages")
+                        .arg(animated ? "frames" : "pages")
                         .arg(size.width())
                         .arg(size.height())
                         .arg(QLocale().formattedDataSize(bytes, 0)),
@@ -1332,10 +1285,10 @@ QList<QImage> ImageViewer::readFrames(
     // a focused button is what Enter and Space press); both with one role,
     // so the platform's button order keeps them in this order.
     QPushButton *first = box.addButton(
-        QString("First %1 Only").arg(m_animated ? "Frame" : "Page"),
+        QString("First %1 Only").arg(animated ? "Frame" : "Page"),
         QMessageBox::ActionRole);
     QPushButton *all = box.addButton(
-        QString("Load All %1").arg(m_animated ? "Frames" : "Pages"),
+        QString("Load All %1").arg(animated ? "Frames" : "Pages"),
         QMessageBox::ActionRole);
     box.setDefaultButton(first);
     box.setEscapeButton(first);
@@ -1345,53 +1298,64 @@ QList<QImage> ImageViewer::readFrames(
       statusBar()->showMessage(
           QString("Showing only the first of %1 %2")
               .arg(count)
-              .arg(m_animated ? "frames" : "pages"),
+              .arg(animated ? "frames" : "pages"),
           5000);
     }
   }
 
-  QList<QImage> frames;
   QGuiApplication::setOverrideCursor(Qt::WaitCursor);
   for (int i = 0; i < toRead; ++i) {
     // Animation readers move on to the next frame by themselves; readers of
     // multi-page files (TIFF) have to be told to.
-    if (i > 0 && !m_animated && !reader.jumpToNextImage())
+    if (i > 0 && !animated && !reader.jumpToNextImage())
       break;
     const QImage frame = reader.read();
     if (frame.isNull())
       break;
-    frames << frame;
+    result.images << frame;
     const int delay = reader.nextImageDelay(); // valid after read()
-    m_frameDelays << (m_animated && delay <= 10 ? kDefaultFrameDelayMs : delay);
+    result.delays << (animated && delay <= 10 ? kDefaultFrameDelayMs : delay);
   }
   QGuiApplication::restoreOverrideCursor();
-  if (frames.size() < toRead && !frames.isEmpty()) {
+  const int read = int(result.images.size());
+  if (read < toRead && read > 0) {
     statusBar()->showMessage(QString("Could read only %1 of %2 frames: %3")
-                                 .arg(frames.size())
+                                 .arg(read)
                                  .arg(toRead)
                                  .arg(reader.errorString()),
                              6000);
     std::fprintf(stderr, "imgview: %s: read only %d of %d frames: %s\n",
-                 qPrintable(name), int(frames.size()),
-                 toRead, qPrintable(reader.errorString()));
+                 qPrintable(name), read, toRead,
+                 qPrintable(reader.errorString()));
   }
-  return frames;
+  return result;
+}
+
+// Show what readFrames() returned, or nothing for an empty result; stops
+// any playback.
+void ImageViewer::showFrames(LoadedFrames frames) {
+  stopPlayback();
+  m_animated = frames.animated;
+  m_frameTotal = frames.total;
+  m_frameDelays = std::move(frames.delays);
+  if (frames.images.isEmpty())
+    m_label->clearImage();
+  else
+    m_label->setFrames(std::move(frames.images)); // keeps the view settings
 }
 
 void ImageViewer::loadImage(const QString &path) {
-  stopPlayback();
+  stopPlayback(); // not behind a "Large image" dialog
   m_inMemory = false;
   m_memoryType.clear();
   m_memoryData.clear();
   m_imagePath = QFileInfo(path).absoluteFilePath();
   m_folder = QFileInfo(m_imagePath).absolutePath();
-  const QList<QImage> frames = readFrames(m_imagePath);
-  if (frames.isEmpty()) {
-    m_label->clearImage();
+  LoadedFrames frames = readFrames(m_imagePath);
+  const bool failed = frames.images.isEmpty();
+  showFrames(std::move(frames));
+  if (failed)
     m_label->setText(QString("Failed to load image:\n%1").arg(m_imagePath));
-  } else {
-    m_label->setFrames(frames); // keeps interpolation/invert/gamma settings
-  }
 
   if (!m_list.isEmpty()) {
     m_folderIndex = int(m_list.indexOf(m_imagePath));
@@ -1793,10 +1757,6 @@ void ImageViewer::toggleInterpolation() {
   statusBar()->showMessage(message, kSettingMessageMs);
 }
 
-// e.g. "frame_0012.png (12/48) – Image Viewer [nearest, 3.138×]" or
-// "... [area, inverted, γ 1.68, sat 60%, fit 0.421×]". The
-// mode is shown because it changes what the pixels mean; three decimals so a
-// near-1 wheel zoom can't be mistaken for exactly 1:1.
 // The status bar's key hints. For an animation or multi-page image ←/→
 // step through frames, so the hints show PgUp/PgDn for switching images
 // and Space for playing; otherwise just ←/→.
@@ -1813,6 +1773,48 @@ void ImageViewer::updateHints() {
     m_hintLabel->setText(text);
 }
 
+// The processing and tone settings that are on, in the order applied.
+// The saturation change isn't applied while false color is on.
+QList<ImageViewer::ActiveSetting> ImageViewer::activeSettings() const {
+  QList<ActiveSetting> list;
+  if (m_label->stretchStep() > 0) {
+    const QString clip = QString::number(m_label->stretchClipPercent());
+    list.append({"stretch " + clip + "%", "stretch " + clip + "%", "st" + clip});
+  } else if (m_label->stretchStep() < 0) {
+    const QString squash = QString::number(m_label->squashPercent());
+    list.append(
+        {"squash " + squash + "%", "squash " + squash + "%", "sq" + squash});
+  }
+  if (m_label->highPassStep() != 0) {
+    const QString radius = QString::number(m_label->highPassRadius());
+    list.append({"high-pass " + radius + " px", "high-pass " + radius + " px",
+                 "hp" + radius});
+  }
+  if (m_label->isInverted())
+    list.append({"inverted", "inverted", "inv"});
+  if (m_label->gammaStep() != 0) {
+    const QString g = QString::number(m_label->gamma(), 'f', 2);
+    list.append({"γ " + g, "gamma " + g, "g" + g});
+  }
+  const auto falseColor = m_label->falseColor();
+  if (m_label->saturationStep() != 0 &&
+      falseColor == ScaledImageLabel::FalseColor::Off) {
+    const QString name = m_label->saturationModeName(); // or "vibrance"
+    const QString sat = QString::number(m_label->saturationPercent());
+    list.append({name.left(3) + " " + sat + "%", name + " " + sat + "%",
+                 name.left(3) + sat}); // e.g. "sat 60%", "sat60"
+  }
+  if (falseColor != ScaledImageLabel::FalseColor::Off) {
+    const QString map = ScaledImageLabel::falseColorName(falseColor);
+    list.append({map, "false color " + map, map});
+  }
+  return list;
+}
+
+// e.g. "frame_0012.png (12/48) – Image Viewer [nearest, 3.138×]" or
+// "... [area, inverted, γ 1.68, sat 60%, fit 0.421×]". The
+// mode is shown because it changes what the pixels mean; three decimals so a
+// near-1 wheel zoom can't be mistaken for exactly 1:1.
 void ImageViewer::updateWindowTitle() {
   updateHints();
   if (m_folder.isEmpty() && !m_inMemory) { // nothing opened yet
@@ -1822,21 +1824,8 @@ void ImageViewer::updateWindowTitle() {
     return;
   }
   QString info = m_label->resamplingName();
-  if (m_label->stretchStep() != 0)
-    info += ", " + m_label->stretchName();
-  if (m_label->highPassStep() != 0)
-    info += QString(", high-pass %1 px").arg(m_label->highPassRadius());
-  if (m_label->isInverted())
-    info += ", inverted";
-  if (m_label->gammaStep() != 0)
-    info += QString(", γ %1").arg(m_label->gamma(), 0, 'f', 2);
-  if (m_label->saturationStep() != 0 &&
-      m_label->falseColor() == ScaledImageLabel::FalseColor::Off)
-    info += QString(", %1 %2%")
-                .arg(m_label->saturationModeName().left(3))
-                .arg(m_label->saturationPercent());
-  if (m_label->falseColor() != ScaledImageLabel::FalseColor::Off)
-    info += ", " + ScaledImageLabel::falseColorName(m_label->falseColor());
+  for (const ActiveSetting &setting : activeSettings())
+    info += ", " + setting.title;
   if (!m_label->originalSize().isEmpty()) {
     info += QString(", %1%2×")
                 .arg(m_label->isFitToWindow() ? "fit " : "")
