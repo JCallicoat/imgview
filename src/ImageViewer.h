@@ -59,6 +59,7 @@ private:
   void toggleHelpPanel();
   void updateHelpPanel();
   void updateWindowTitle();
+  void updateHints(); // the status bar's key hints, for the image shown
 
   // Image loading and folder navigation.
   void loadImage(const QString &path);
@@ -67,6 +68,26 @@ private:
   QStringList imageFilesInFolder() const;
   static QStringList imageFilesIn(const QString &folder);
   void showAdjacentInList(int delta);
+
+  // Frames of an animation or multi-page file: ←/→ step through them,
+  // Home/End go to the first and last, Space plays and pauses.
+  // readFrames() decodes all of a file's frames (asking first if they'd
+  // take a lot of memory) and sets the frame fields below.
+  QList<QImage> readFrames(const QString &path);
+  void stepFrame(int delta);
+  void goToFrame(int index); // pauses playback
+  void togglePlayback();
+  void stopPlayback();
+  void playNextFrame();
+  int frameDelayMs(int index) const;
+  QString frameDelaysText() const; // for the info panel
+
+  bool m_animated = false; // an animation, not pages of a document
+  int m_frameTotal = 0;    // frames in the file; more than loaded if only
+                           // the first was
+  QList<int> m_frameDelays; // ms each frame is shown; 0 when not given
+  bool m_playing = false;
+  QTimer m_playTimer;       // single shot, for the next frame
 
   QString m_imagePath; // empty when a folder with no images was opened,
                        // or for a pasted image
@@ -93,6 +114,7 @@ private:
   // Status bar copy of the title's file/view info, shown only in fullscreen
   // (where there's no title bar).
   QLabel *m_viewInfoLabel = nullptr;
+  QLabel *m_hintLabel = nullptr; // key hints on the left of the status bar
 };
 
 class ScaledImageLabel : public QLabel {
@@ -116,6 +138,17 @@ public:
   void setPixmap(const QPixmap &pixmap);
 
   void setPixmap(const QImage &image);
+
+  // A multi-frame image (an animation or a multi-page file), shown from the
+  // first frame. Like setPixmap(), it resets the zoom. The contrast stretch is worked out from all frames together,
+  // and the high-pass keeps one gain for all frames, so a frame doesn't look
+  // brighter or more detailed than another just from the processing.
+  void setFrames(const QList<QImage> &frames);
+  int frameCount() const { return int(m_frames.size()); } // 0 if none
+  int frameIndex() const { return m_frameIndex; }
+  // Show another frame, keeping the zoom and position (unless its size
+  // differs, as pages of a TIFF can; then it's fitted to the window).
+  void setFrame(int index);
 
   QSize originalSize() const { return m_original.size(); }
 
@@ -239,6 +272,7 @@ protected:
 
 private:
   void resetView();
+  void showFrame(int index); // sets m_source and its flags, no repaint
   void updateProcessed();
   QString pixelTipText(const QPoint &pixel) const;
   // Whether the view is drawn from the area-averaged downscale rather than
@@ -263,11 +297,19 @@ private:
   // otherwise converted to ARGB32_Premultiplied, which keeps the values, and
   // then sharing its data with an unstretched m_original.
   QImage m_source;
+  // Every frame, in the same form as m_source, which is one of them (a
+  // single image is one frame).
+  QList<QImage> m_frames;
+  int m_frameIndex = 0;
   int m_stretchStep = 0;
-  StretchHistogram m_stretchHistogram; // of m_source; empty until needed
+  StretchHistogram m_stretchHistogram; // of all frames; empty until needed
   StretchRange m_stretchRange;
   int m_highPassStep = 0;
   double m_highPassLimit = 0.0;
+  // With several frames: the high-pass gain found for the first frame
+  // processed, used for the others; 0 until then, and whenever the stretch
+  // or high-pass radius changes.
+  double m_sharedHighPassLimit = 0.0;
   bool m_deep = false;     // more than 8 bits per channel
   bool m_gray = false;     // all pixels grey
   bool m_hasAlpha = false;

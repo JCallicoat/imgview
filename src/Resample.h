@@ -112,7 +112,10 @@ StretchRange squashRange(double factor);
 // lighter or darker where it stands out. `limit` is one value for all
 // channels, the size of difference that 0.1 % of the values exceed, so the
 // gain adapts to the image and only the strongest outliers clip. It's
-// returned through `limit` if given. Edges are extended by repeating the
-// border pixels. Alpha is unchanged. Returns Format_ARGB32_Premultiplied.
+// returned through `limit` if given. A `fixedLimit` above 0 is used instead
+// of the one found, e.g. so all frames of an animation get the same gain.
+// Edges are extended by repeating the border pixels. Alpha is unchanged.
+// Returns Format_ARGB32_Premultiplied.
 QImage applyHighPass(const QImage &img, const StretchRange &range,
-                     double sigma, double *limit = nullptr);
+                     double sigma, double *limit = nullptr,
+                     double fixedLimit = 0.0);

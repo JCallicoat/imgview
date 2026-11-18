@@ -25,6 +25,14 @@ skipped). Without a path, the window opens with no image.
 .B iv
 is a short alias for
 .BR imgview .
+.PP
+An animated GIF, WebP or JPEG XL, or a multi-page TIFF, opens at its first
+frame; the left and right arrow keys then step through its frames, Space
+plays them at the file's own speed, and Page Up and Page Down switch images.
+All frames are decoded into memory, and if that would take more than 250 MiB,
+imgview asks first and can load only the first frame. The contrast stretch is
+worked out from all frames together and the high-pass keeps one gain for all
+frames, so frames can be compared with each other.
 .SH OPTIONS
 .TP
 .BR \-h ", " \-\-help
@@ -46,7 +54,18 @@ Zoom to exactly 1:1, centred on the pointer.
 .B Arrow keys
 Pan a zoomed image (with Shift: by one image pixel). Left and right switch
 to the previous and next image in the folder when the whole image fits in
-the view; when it only fits sideways, they do nothing.
+the view (in an animation or multi-page image: the previous and next frame);
+when it only fits sideways, they do nothing.
+.TP
+.B Page Up, Page Down
+Previous and next image in the folder, at any zoom and in animations too.
+.TP
+.B Home, End
+First and last frame of an animation or multi-page image.
+.TP
+.B Space
+Play or pause an animation or multi-page image, each frame for its own delay
+(100 ms if the file gives none, or 10 ms or less), looping.
 .TP
 .B p
 Toggle pixel value tooltips: resting the pointer on the image shows the
@@ -110,7 +129,8 @@ arrow keys don't switch images until a file is opened.
 .TP
 .B s
 Save the image area as shown (zoom, stretch, high-pass, inversion, gamma,
-saturation and false color applied) as a PNG next to the image, or in the Pictures folder if that isn't
+saturation and false color applied; the frame number is added to the name
+for an animation) as a PNG next to the image, or in the Pictures folder if that isn't
 writable or the image was pasted. With
 Shift: choose where to save.
 .TP

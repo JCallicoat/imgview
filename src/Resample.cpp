@@ -454,7 +454,7 @@ QImage applyStretch(const QImage &img, const StretchRange &range) {
 }
 
 QImage applyHighPass(const QImage &img, const StretchRange &range,
-                     double sigma, double *limit) {
+                     double sigma, double *limit, double fixedLimit) {
   const QImage src = stretchInput(img);
   if (src.isNull())
     return {};
@@ -530,36 +530,39 @@ QImage applyHighPass(const QImage &img, const StretchRange &range,
   tmp = {};
 
   // The gain: the difference exceeded by 0.1 % of the channel values of
-  // pixels that aren't fully transparent, at a resolution of 1/65535.
-  constexpr int kBins = 65536;
-  std::vector<quint64> hist(kBins, 0);
-  std::mutex mutex;
-  parallelRows(h, [&](int b, int e) {
-    std::vector<quint64> local(kBins, 0);
-    for (size_t i = size_t(b) * w; i < size_t(e) * w; ++i) {
-      if (alpha[i] == 0)
-        continue;
-      for (const auto &plane : planes)
-        ++local[std::min(kBins - 1, int(std::fabs(plane[i]) * 65535.0f + 0.5f))];
+  // pixels that aren't fully transparent, at a resolution of 1/65535,
+  // unless one is given.
+  const float lim = fixedLimit > 0.0 ? float(fixedLimit) : [&] {
+    constexpr int kBins = 65536;
+    std::vector<quint64> hist(kBins, 0);
+    std::mutex mutex;
+    parallelRows(h, [&](int b, int e) {
+      std::vector<quint64> local(kBins, 0);
+      for (size_t i = size_t(b) * w; i < size_t(e) * w; ++i) {
+        if (alpha[i] == 0)
+          continue;
+        for (const auto &plane : planes)
+          ++local[std::min(kBins - 1, int(std::fabs(plane[i]) * 65535.0f + 0.5f))];
+      }
+      const std::lock_guard<std::mutex> lock(mutex);
+      for (int v = 0; v < kBins; ++v)
+        hist[v] += local[v];
+    });
+    quint64 total = 0;
+    for (quint64 c : hist)
+      total += c;
+    int top = 1; // at least one step, so a flat image stays flat
+    const double clip = double(total) * 0.001;
+    quint64 count = 0;
+    for (int v = kBins - 1; v > 1; --v) {
+      count += hist[v];
+      if (double(count) > clip) {
+        top = v;
+        break;
+      }
     }
-    const std::lock_guard<std::mutex> lock(mutex);
-    for (int v = 0; v < kBins; ++v)
-      hist[v] += local[v];
-  });
-  quint64 total = 0;
-  for (quint64 c : hist)
-    total += c;
-  int top = 1; // at least one step, so a flat image stays flat
-  const double clip = double(total) * 0.001;
-  quint64 count = 0;
-  for (int v = kBins - 1; v > 1; --v) {
-    count += hist[v];
-    if (double(count) > clip) {
-      top = v;
-      break;
-    }
-  }
-  const float lim = top / 65535.0f;
+    return top / 65535.0f;
+  }();
   if (limit)
     *limit = lim;
 

@@ -15,6 +15,7 @@ It was built for examining images such as Mars rover frames for artifacts like c
 - **Single-pixel panning** – step the view by exactly one image pixel to walk across fine detail.
 - **Pixel values** (`P`) – rest the pointer on the image to see the position and stored value of the pixel under it, including the full values of 16-bit images.
 - **Folder browsing** – step to the previous or next image in the same folder, in natural order (`frame2` before `frame10`), keeping your view settings.
+- **Animations and multi-page images** – step through the frames of an animated GIF, WebP or JPEG XL, or the pages of a TIFF, one at a time, or play them at the file's own speed, with every tool working on each frame.
 - **Contrast stretch** – spread the image's actual range of values over the full black-to-white range, clipping a chosen percentage at each end. 16-bit images are stretched from their full data, so a 12-bit frame that looks nearly black shows all its levels.
 - **color inversion** – turns a faint light streak on a dark background into a dark streak on a light one.
 - **High-pass** – show only fine detail, as differences from each pixel's surroundings, so hot pixels, compression blocks and small specks stand out against a flat grey.
@@ -60,7 +61,10 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 | `←` `↑` `→` `↓` | Pan by 10 % of the view (when the image view has focus) |
 | `Shift` + arrows | Pan by exactly one image pixel |
 | `P` | Toggle pixel value tooltips |
-| `←` / `→` (whole image fits in the view) | Previous / next image in the folder |
+| `←` / `→` (whole image fits in the view) | Previous / next image in the folder; in an animation or multi-page image, previous / next frame |
+| `PgUp` / `PgDn` | Previous / next image in the folder, at any zoom and in animations too |
+| `Home` / `End` | First / last frame of an animation or multi-page image |
+| `Space` | Play / pause an animation or multi-page image |
 | `I` | Cycle zoom-in resampling: **nearest** (true pixels, default) → **bicubic** (smooth) → **Lanczos3** (smooth, sharper) |
 | `N` | Toggle color inversion |
 | `.` | Gamma up: darker, more contrast among bright values |
@@ -89,9 +93,9 @@ Any format Qt can read (JPEG, PNG, TIFF, BMP, … depending on the installed Qt 
 
 **Status bar:** hints for the most used keys (cut off from the right when the window is narrow, so `help: ?` stays visible); in fullscreen, the title's file and view info on the right (see below). Changing a view setting shows the new value there for two seconds, e.g. `Saturation 336%`, or `Gamma 8.00 (maximum)` at a limit.
 
-All keys except the arrow keys work wherever keyboard focus is, including in the info panel (while you are typing in a metadata cell, keys go into the cell). The arrow keys pan only while the image has focus (click the image to give it focus), so they still move between cells in the metadata table.
+All keys except the arrow keys, `PgUp` / `PgDn` and `Home` / `End` work wherever keyboard focus is, including in the info panel (while you are typing in a metadata cell, keys go into the cell). Those keys work only while the image has focus (click the image to give it focus), so they still move around the metadata table.
 
-**Previous / next image:** `←` and `→` switch images when the whole image fits in the window (at fit-to-window, for example). When the image is wider than the window, they pan as usual. When it's only taller than the window (say a tall image at 1:1), they do nothing, so you can't jump to another image by accident while panning up and down. Press `0` to fit, then `←` / `→` to move on. The folder's list is every file Qt can read, matched by extension (case-insensitively), sorted naturally, and rescanned on every press, so files added or removed meanwhile are picked up. (With several paths given, it's that list instead; listed files deleted meanwhile are skipped.) It wraps around: `→` on the last image goes to the first and `←` on the first goes to the last, with a short message in the status bar when that happens. Interpolation mode, stretch, high-pass, inversion, gamma, saturation and false color stay as they are (a stretch is worked out afresh for each image); zoom resets to fit; the info panel updates for the new file.
+**Previous / next image:** `←` and `→` switch images when the whole image fits in the window (at fit-to-window, for example). When the image is wider than the window, they pan as usual. When it's only taller than the window (say a tall image at 1:1), they do nothing, so you can't jump to another image by accident while panning up and down. Press `0` to fit, then `←` / `→` to move on, or use `PgUp` / `PgDn`, which switch images at any zoom. The folder's list is every file Qt can read, matched by extension (case-insensitively), sorted naturally, and rescanned on every press, so files added or removed meanwhile are picked up. (With several paths given, it's that list instead; listed files deleted meanwhile are skipped.) It wraps around: `→` on the last image goes to the first and `←` on the first goes to the last, with a short message in the status bar when that happens. Interpolation mode, stretch, high-pass, inversion, gamma, saturation and false color stay as they are (a stretch is worked out afresh for each image); zoom resets to fit; the info panel updates for the new file.
 
 **Pixel values:** with `P` on, resting the pointer on the image shows a tooltip with the position of the image pixel under it (from 0 at the top left) and its stored value, e.g. `x 512, y 300` and `RGB 12, 34, 56`, or `value 87` for a greyscale image, with `A` and the alpha value added for an image with transparency. Once it's shown, it follows the pointer from pixel to pixel. These are the values decoded from the file, before the contrast stretch, high-pass, resampling and inversion, gamma, saturation or false color. Images with more than 8 bits per channel, such as 16-bit PNG and TIFF, show their values on a 16-bit scale (0–65535), marked `(16-bit)`.
 
@@ -102,7 +106,10 @@ The title shows the file, its position in the folder, and the current view setti
 ```
 frame_0012.png (12/48) – Image Viewer [nearest, inverted, γ 1.68, sat 60%, 3.138×]
 frame_0013.png (13/48) – Image Viewer [area, stretch 0.5%, fit 0.421×]
+dust_devil.gif (3/9), frame 12/40, playing – Image Viewer [nearest, 4.000×]
 ```
+
+- **frame** – for an animation or multi-page image, the frame shown and the number of frames, with `playing` while it plays.
 
 - **nearest / bicubic / lanczos3 / area** – the resampling actually applied: the selected mode when zoomed in, `area` when zoomed out (where every mode uses the same area-averaging downscale). The help panel (`?`) shows the selected mode.
 - **stretch** / **squash** – shown with its clip percentage when the contrast stretch is on, or with the share of the range left when contrast is squashed.
@@ -114,6 +121,17 @@ frame_0013.png (13/48) – Image Viewer [area, stretch 0.5%, fit 0.421×]
 - **zoom factor** – image pixels to screen pixels, with three decimals so a near-1 zoom such as `0.998×` can't be mistaken for exactly `1.000×`. `fit` means the image is being fitted to the window.
 
 In fullscreen there's no title bar, so the same information appears on the right of the status bar, e.g. `frame_0012.png (12/48)  [nearest, inverted, γ 1.68, sat 60%, 3.138×]`. If space is short, the key hints are cut off rather than this.
+
+## Animations and multi-page images
+
+An animated GIF, WebP or JPEG XL (whatever the installed Qt image plugins can read as an animation), or a TIFF with several pages, opens at its first frame, paused, with the frame number in the title, e.g. `frame 1/40`.
+
+- **Stepping:** `←` / `→` show the previous / next frame (when the whole image fits the window, as for browsing; zoomed in they pan), wrapping around at either end with a note in the status bar. `Home` / `End` go to the first / last frame. The zoom and position stay as they are, so the same spot can be compared from frame to frame. `PgUp` / `PgDn` move on to the previous / next image in the folder.
+- **Playing:** `Space` plays from the frame shown and pauses again. Each frame is shown for its own delay from the file; a delay of 10 ms or less (or none, as for TIFF pages) counts as 100 ms, as web browsers do. Playback loops, whatever loop count the file sets. A frame that takes longer than its delay to process, as with the high-pass on a large image, slows playback down rather than being skipped. Stepping or switching images pauses it.
+- **The same processing for every frame:** the contrast stretch is worked out from all frames together, so each frame gets the same mapping, and a frame doesn't look brighter or flatter than another just because its own darkest and brightest values differ. Likewise the high-pass keeps the gain it found for the first frame it processed for every other frame (until the radius or stretch changes), so the same difference looks the same in every frame. The tone adjustments map values the same way for every frame anyway.
+- **Pixel values and saving** use the frame shown; saved views have the frame number in their name and in the PNG's description.
+
+Every frame is decoded when the file is opened and kept in memory, about 4 bytes per pixel per frame (8 for 16-bit images). If that would come to more than 250 MiB, imgview asks first, and can load just the first frame instead (the default, also on `Esc`). A file whose frames stop decoding partway shows the frames read so far, with a note in the status bar.
 
 ## Viewing true pixels
 
@@ -174,7 +192,7 @@ False color is applied last, to what is on screen: the pixel's Rec. 709 luma, af
 
 `S` saves what the image area shows right now – the visible part of the image, with the current stretch, high-pass, resampling, inversion, gamma, saturation and false color applied – as a lossless PNG. No window background or interface is included, and it's saved at the display's resolution, so at 1:1 in nearest mode the file holds the exact (tone-adjusted) pixel values.
 
-- **Where:** next to the image, named after it and the view settings, e.g. `frame_0012_view_x3.000_nearest_inv_g1.68_sat60.png`. An existing file is never overwritten: `-2`, `-3`, … is added instead. If the image's folder isn't writable, the file goes to your Pictures folder. The status bar shows where it was saved, and so does the terminal or log: each save prints a line to standard output, e.g. `imgview: saved view to /data/sol42/frame_0012_view_x3.000_nearest_inv.png (nearest, 3.000x, inverted; source region x=812 y=440 w=300 h=220)`. A failed save is reported on standard error.
+- **Where:** next to the image, named after it and the view settings, e.g. `frame_0012_view_x3.000_nearest_inv_g1.68_sat60.png`, with the frame number first for an animation or multi-page image, e.g. `dust_devil_view_f12_x4.000_nearest.png`. An existing file is never overwritten: `-2`, `-3`, … is added instead. If the image's folder isn't writable, the file goes to your Pictures folder. The status bar shows where it was saved, and so does the terminal or log: each save prints a line to standard output, e.g. `imgview: saved view to /data/sol42/frame_0012_view_x3.000_nearest_inv.png (nearest, 3.000x, inverted; source region x=812 y=440 w=300 h=220)`. A failed save is reported on standard error.
 - **Save as:** `Shift` + `S` opens a save dialog instead (PNG by default; TIFF and other formats by file extension).
 - **Provenance:** the PNG's text fields record the source file, the view settings and which part of the source image is visible, e.g. `nearest, 3.000x, inverted, gamma 1.68, saturation 60%; source region x=812 y=440 w=300 h=220` (shown by tools such as `exiftool` or `pngcheck -t`).
 
@@ -186,6 +204,7 @@ Press `M` to show the panel beside the image:
 
 - **File size**, for example `184.9 KiB (189345 bytes)`, using binary units (KiB, MiB, GiB = 1024-based).
 - **Dimensions** of the original image in pixels.
+- **Frames**, for an animation or multi-page image: how many, e.g. `40 (animated)` or `3 (pages)` (`1 of 40 loaded` if only the first was), and for an animation the range of frame delays and the total, e.g. `40–120 ms, 3.2 s in all`.
 - **Metadata** read with Exiv2, one tag per row, in **EXIF**, **XMP** and **IPTC** sections (each shown only if the file has it). Values are shown interpreted, as `sRGB` or `inch` rather than `1` or `2`; hover over a value to see the raw stored value when it differs, or over a tag to see its full Exiv2 key (e.g. `Exif.Photo.ColorSpace`). XMP properties nested in structures and arrays are labelled by their own name with its namespace prefix, e.g. `stCamera:Author`, with the full path (`Xmp.photoshop.CameraProfiles[1]/stCamera:Author`) in the tooltip; the structures themselves aren't listed as rows of their own. Tags that only point to other parts of the EXIF data (such as the Exif IFD pointer) are left out, since the tags they point to are listed.
 
 The file size and dimension values can be selected with the mouse and copied. The metadata table cells can be edited in place for convenience, but edits are never written back to the file.
@@ -339,6 +358,7 @@ If a build fails after tagging, fix it, then move the tag to the fixed commit (`
 ## Known limitations
 
 - **Images are displayed at 8 bits per channel.** Only the contrast stretch and high-pass use the extra precision of 16-bit PNG or TIFF data; resampling, gamma, saturation and false color work on its 8-bit result. 8-bit images such as JPEGs lose nothing.
+- **Animated PNG (APNG)** shows only its first frame, since Qt's PNG reader doesn't decode the animation. A pasted animation also shows only its first frame.
 - **Zoomed out, single pixels can disappear.** The area-averaging downscale dilutes an isolated hot pixel, so zoom in (or press `R`) to check individual pixels.
 - **Non-whole zoom factors give uneven blocks in nearest mode.** At, say, 3.3× some image pixels are 3 screen pixels wide and some 4. The values are still exact.
 - **HiDPI:** 1:1 means one image pixel per *logical* screen pixel. With fractional display scaling (e.g. 125 %) image pixels map to uneven numbers of physical pixels.

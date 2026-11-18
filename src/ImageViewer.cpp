@@ -22,6 +22,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPushButton>
 #include <QRegularExpression>
 #include <QResizeEvent>
 #include <QScrollBar>
@@ -204,17 +205,49 @@ void ScaledImageLabel::setPixmap(const QPixmap &pixmap) {
 }
 
 void ScaledImageLabel::setPixmap(const QImage &image) {
+  setFrames({image});
+}
+
+void ScaledImageLabel::setFrames(const QList<QImage> &frames) {
   QLabel::setText(QString()); // drop any earlier "Failed to load" message
-  m_deep = isDeepFormat(image.format());
-  m_hasAlpha = image.hasAlphaChannel();
-  m_gray = image.isGrayscale(); // scans 32-bit images, stopping at a colour
-  m_source = m_deep || m_hasAlpha
-                 ? image
-                 : image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+  // Stored as decoded if deeper than 8 bits or with alpha (see m_source),
+  // otherwise as ARGB32_Premultiplied, which keeps the values.
+  m_frames.clear();
+  m_frames.reserve(frames.size());
+  for (const QImage &image : frames)
+    m_frames << (isDeepFormat(image.format()) || image.hasAlphaChannel()
+                     ? image
+                     : image.convertToFormat(QImage::Format_ARGB32_Premultiplied));
   m_stretchHistogram.clear();
+  m_sharedHighPassLimit = 0.0;
+  showFrame(0);
   updateProcessed();
   m_viewportCache = QImage();
   resetView();
+}
+
+void ScaledImageLabel::showFrame(int index) {
+  m_frameIndex = index;
+  m_source = m_frames.value(index);
+  m_deep = isDeepFormat(m_source.format());
+  m_hasAlpha = m_source.hasAlphaChannel();
+  m_gray = m_source.isGrayscale(); // scans 32-bit images, stopping at a colour
+}
+
+void ScaledImageLabel::setFrame(int index) {
+  if (index < 0 || index >= frameCount() || index == m_frameIndex)
+    return;
+  const QSize oldSize = m_source.size();
+  showFrame(index);
+  updateProcessed();
+  m_scaledCache = QImage();
+  m_viewportCache = QImage();
+  if (m_source.size() != oldSize) { // pages of a TIFF can differ in size
+    resetView();
+    return;
+  }
+  update();
+  emit viewChanged();
 }
 
 // Rebuild m_original from m_source for the current stretch and high-pass
@@ -229,14 +262,27 @@ void ScaledImageLabel::updateProcessed() {
   if (m_stretchStep < 0) {
     m_stretchRange = squashRange(squashPercent() / 100.0);
   } else if (m_stretchStep > 0) {
-    if (m_stretchHistogram.empty())
-      m_stretchHistogram = stretchHistogram(m_source);
+    if (m_stretchHistogram.empty()) {
+      // All frames pooled, so every frame gets the same mapping.
+      QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+      for (const QImage &frame : std::as_const(m_frames)) {
+        const StretchHistogram hist = stretchHistogram(frame);
+        if (m_stretchHistogram.empty())
+          m_stretchHistogram = hist;
+        else
+          for (size_t v = 0; v < hist.size(); ++v)
+            m_stretchHistogram[v] += hist[v];
+      }
+      QGuiApplication::restoreOverrideCursor();
+    }
     m_stretchRange = findStretchRange(m_stretchHistogram, stretchClipPercent());
   }
   if (m_highPassStep != 0) {
     QGuiApplication::setOverrideCursor(Qt::WaitCursor); // can take a second
     m_original = applyHighPass(m_source, m_stretchRange, highPassRadius(),
-                               &m_highPassLimit);
+                               &m_highPassLimit, m_sharedHighPassLimit);
+    if (frameCount() > 1)
+      m_sharedHighPassLimit = m_highPassLimit;
     QGuiApplication::restoreOverrideCursor();
   } else if (m_stretchStep != 0) {
     m_original = applyStretch(m_source, m_stretchRange);
@@ -254,6 +300,7 @@ void ScaledImageLabel::setHighPassStep(int step) {
   if (step == m_highPassStep)
     return;
   m_highPassStep = step;
+  m_sharedHighPassLimit = 0.0; // a new gain for the new values
   updateProcessed();
   m_scaledCache = QImage();
   m_viewportCache = QImage();
@@ -284,6 +331,7 @@ void ScaledImageLabel::setStretchStep(int step) {
   if (step == m_stretchStep)
     return;
   m_stretchStep = step;
+  m_sharedHighPassLimit = 0.0; // a new gain for the new values
   updateProcessed();
   m_scaledCache = QImage();
   m_viewportCache = QImage();
@@ -294,7 +342,10 @@ void ScaledImageLabel::setStretchStep(int step) {
 void ScaledImageLabel::clearImage() {
   m_original = QImage();
   m_source = QImage();
+  m_frames.clear();
+  m_frameIndex = 0;
   m_stretchHistogram.clear();
+  m_sharedHighPassLimit = 0.0;
   m_stretchRange = StretchRange();
   m_deep = m_gray = m_hasAlpha = false;
   m_viewportCache = QImage();
@@ -816,11 +867,9 @@ ImageViewer::ImageViewer(const QString &path, QWidget *parent)
   // Hints for the most used keys; ? shows them all. Keys are space-separated
   // (',' and '-' are keys themselves). A minimum width of 1 lets the window
   // shrink below the text width; the text is then clipped.
-  QLabel *hintLabel = new QLabel(
-      QStringLiteral("help: ?  |  open: o  |  paste: ctrl+v  |  info: m  |  "
-                     "quit: q  |  zoom: - + 0 r  |  pan: ← ↑ → ↓  |  "
-                     "prev/next: ← →  |  fullscreen: f"),
-      this);
+  // The text is set in updateHints().
+  m_hintLabel = new QLabel(this);
+  QLabel *hintLabel = m_hintLabel;
   hintLabel->setMinimumWidth(1);
   hintLabel->setContentsMargins(6, 0, 0, 0);
   // Ignored: the hints only get the space the view info label leaves over,
@@ -849,6 +898,10 @@ ImageViewer::ImageViewer(const QString &path, QWidget *parent)
           &ImageViewer::updateWindowTitle);
   updateWindowTitle();
   mainLayout->addWidget(m_label, 1);
+
+  m_playTimer.setSingleShot(true);
+  m_playTimer.setTimerType(Qt::PreciseTimer);
+  connect(&m_playTimer, &QTimer::timeout, this, &ImageViewer::playNextFrame);
 
   if (path.isEmpty())
     m_label->setText("No image open.\nPress O to open an image, or Ctrl+V to "
@@ -918,6 +971,10 @@ void ImageViewer::pasteImage() {
     return;
   }
 
+  stopPlayback();
+  m_animated = false;
+  m_frameTotal = 1;
+  m_frameDelays.clear();
   m_list.clear();
   m_folder.clear();
   m_imagePath.clear();
@@ -971,9 +1028,12 @@ void ImageViewer::openPath(const QString &path) {
     loadImage(QDir(m_folder).filePath(files.first()));
     return;
   }
+  stopPlayback();
   m_imagePath.clear();
   m_folderIndex = -1;
   m_folderCount = 0;
+  m_frameTotal = 0;
+  m_frameDelays.clear();
   m_label->clearImage();
   m_label->setText(QString("No images found in folder:\n%1").arg(m_folder));
   refreshInfoPanel();
@@ -1071,6 +1131,15 @@ void ImageViewer::saveView(bool chooseLocation) {
   QString tag = "x" + zoom + "_" + mode;
   QString settings = QString("%1, %2x%3").arg(
       mode, zoom, m_label->isFitToWindow() ? " (fit)" : "");
+  if (m_label->frameCount() > 1) {
+    // Zero-padded to the width of the count, so the files sort in order.
+    const int count = m_label->frameCount();
+    const int frame = m_label->frameIndex() + 1;
+    tag = QString("f%1_").arg(frame, int(QString::number(count).size()), 10,
+                              QLatin1Char('0')) +
+          tag;
+    settings = QString("frame %1/%2, ").arg(frame).arg(count) + settings;
+  }
   if (m_label->stretchStep() > 0) {
     const QString clip = QString::number(m_label->stretchClipPercent());
     tag += "_st" + clip;
@@ -1158,20 +1227,112 @@ void ImageViewer::saveView(bool chooseLocation) {
   std::fflush(stdout);
 }
 
+// Ask before decoding all frames of a file if they'd take more memory
+// than this.
+static constexpr qint64 kFrameMemoryWarnBytes = 250LL * 1024 * 1024;
+
+// Shown for this long if the file gives no delay, or one of 10 ms or less,
+// as web browsers do for GIFs; also for pages of a document played through.
+static constexpr int kDefaultFrameDelayMs = 100;
+
+QList<QImage> ImageViewer::readFrames(const QString &path) {
+  m_animated = false;
+  m_frameTotal = 0;
+  m_frameDelays.clear();
+  QImageReader reader(path);
+  // Before anything else: the TIFF reader counts 1 page after other queries.
+  const int count = reader.imageCount();
+  if (count <= 1) {
+    // A QImage rather than a QPixmap, so a 16-bit image keeps its stored
+    // values for the pixel value tooltips.
+    const QImage image(path);
+    if (image.isNull())
+      return {};
+    m_frameTotal = 1;
+    return {image};
+  }
+  m_animated = reader.supportsAnimation();
+  m_frameTotal = count;
+
+  // Estimated at 4 bytes a pixel as decoded, or 8 for deeper formats.
+  int toRead = count;
+  const QSize size = reader.size();
+  const qint64 bytes = qint64(size.width()) * size.height() *
+                       (isDeepFormat(reader.imageFormat()) ? 8 : 4) * count;
+  if (size.isValid() && bytes > kFrameMemoryWarnBytes) {
+    QMessageBox box(QMessageBox::Warning, "Large image",
+                    QString("%1 has %2 %3 of %4 × %5 px. Decoding all of them "
+                            "takes about %6 of memory.")
+                        .arg(QFileInfo(path).fileName())
+                        .arg(count)
+                        .arg(m_animated ? "frames" : "pages")
+                        .arg(size.width())
+                        .arg(size.height())
+                        .arg(QLocale().formattedDataSize(bytes, 0)),
+                    QMessageBox::NoButton, this);
+    // The safe choice first, as the dialog focuses its first button (and
+    // a focused button is what Enter and Space press); both with one role,
+    // so the platform's button order keeps them in this order.
+    QPushButton *first = box.addButton(
+        QString("First %1 Only").arg(m_animated ? "Frame" : "Page"),
+        QMessageBox::ActionRole);
+    QPushButton *all = box.addButton(
+        QString("Load All %1").arg(m_animated ? "Frames" : "Pages"),
+        QMessageBox::ActionRole);
+    box.setDefaultButton(first);
+    box.setEscapeButton(first);
+    box.exec();
+    if (box.clickedButton() != all) {
+      toRead = 1;
+      statusBar()->showMessage(
+          QString("Showing only the first of %1 %2")
+              .arg(count)
+              .arg(m_animated ? "frames" : "pages"),
+          5000);
+    }
+  }
+
+  QList<QImage> frames;
+  QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+  for (int i = 0; i < toRead; ++i) {
+    // Animation readers move on to the next frame by themselves; readers of
+    // multi-page files (TIFF) have to be told to.
+    if (i > 0 && !m_animated && !reader.jumpToNextImage())
+      break;
+    const QImage frame = reader.read();
+    if (frame.isNull())
+      break;
+    frames << frame;
+    const int delay = reader.nextImageDelay(); // valid after read()
+    m_frameDelays << (m_animated && delay <= 10 ? kDefaultFrameDelayMs : delay);
+  }
+  QGuiApplication::restoreOverrideCursor();
+  if (frames.size() < toRead && !frames.isEmpty()) {
+    statusBar()->showMessage(QString("Could read only %1 of %2 frames: %3")
+                                 .arg(frames.size())
+                                 .arg(toRead)
+                                 .arg(reader.errorString()),
+                             6000);
+    std::fprintf(stderr, "imgview: %s: read only %d of %d frames: %s\n",
+                 QFile::encodeName(path).constData(), int(frames.size()),
+                 toRead, qPrintable(reader.errorString()));
+  }
+  return frames;
+}
+
 void ImageViewer::loadImage(const QString &path) {
+  stopPlayback();
   m_pasted = false;
   m_pastedType.clear();
   m_pastedData.clear();
   m_imagePath = QFileInfo(path).absoluteFilePath();
   m_folder = QFileInfo(m_imagePath).absolutePath();
-  // A QImage rather than a QPixmap, so a 16-bit image keeps its stored
-  // values for the pixel value tooltips.
-  const QImage image(m_imagePath);
-  if (image.isNull()) {
+  const QList<QImage> frames = readFrames(m_imagePath);
+  if (frames.isEmpty()) {
     m_label->clearImage();
     m_label->setText(QString("Failed to load image:\n%1").arg(m_imagePath));
   } else {
-    m_label->setPixmap(image); // keeps interpolation/invert/gamma settings
+    m_label->setFrames(frames); // keeps interpolation/invert/gamma settings
   }
 
   if (!m_list.isEmpty()) {
@@ -1268,6 +1429,88 @@ void ImageViewer::showAdjacentInList(int delta) {
   statusBar()->showMessage("None of the listed images exist anymore", 3000);
 }
 
+// ←/→ in an animation or multi-page file: pause, then step one frame,
+// wrapping around at either end like image browsing.
+void ImageViewer::stepFrame(int delta) {
+  const int n = m_label->frameCount();
+  int index = m_label->frameIndex() + delta;
+  QString note;
+  if (index >= n) {
+    index = 0;
+    note = "Wrapped to the first frame";
+  } else if (index < 0) {
+    index = n - 1;
+    note = "Wrapped to the last frame";
+  }
+  goToFrame(index);
+  if (!note.isEmpty())
+    statusBar()->showMessage(note, 2000);
+}
+
+void ImageViewer::goToFrame(int index) {
+  if (m_playing) {
+    stopPlayback();
+    updateWindowTitle(); // drop "playing" even if the frame stays the same
+    updateHelpPanel();
+  }
+  m_label->setFrame(index);
+}
+
+// Space: play from the frame shown, each frame for its own delay, looping
+// (regardless of the file's loop count); again to pause.
+void ImageViewer::togglePlayback() {
+  if (m_label->frameCount() < 2) {
+    statusBar()->showMessage("Not an animation or a multi-page image", 2000);
+    return;
+  }
+  if (m_playing) {
+    stopPlayback();
+    statusBar()->showMessage(QString("Paused at frame %1")
+                                 .arg(m_label->frameIndex() + 1),
+                             2000);
+  } else {
+    m_playing = true;
+    m_playTimer.start(frameDelayMs(m_label->frameIndex()));
+  }
+  updateWindowTitle();
+  updateHelpPanel();
+}
+
+void ImageViewer::stopPlayback() {
+  m_playing = false;
+  m_playTimer.stop();
+}
+
+// The next frame, timed from when it's ready, so a frame that's slow to
+// process (e.g. with the high-pass on) slows playback rather than frames
+// being skipped.
+void ImageViewer::playNextFrame() {
+  const int n = m_label->frameCount();
+  if (!m_playing || n < 2)
+    return;
+  m_label->setFrame((m_label->frameIndex() + 1) % n);
+  m_playTimer.start(frameDelayMs(m_label->frameIndex()));
+}
+
+int ImageViewer::frameDelayMs(int index) const {
+  const int delay = m_frameDelays.value(index);
+  return delay > 0 ? delay : kDefaultFrameDelayMs;
+}
+
+// E.g. "100 ms each, 4.8 s in all" or "40–500 ms, 5.2 s in all".
+QString ImageViewer::frameDelaysText() const {
+  if (m_frameDelays.isEmpty())
+    return {};
+  const auto [lo, hi] =
+      std::minmax_element(m_frameDelays.begin(), m_frameDelays.end());
+  qint64 total = 0;
+  for (int d : m_frameDelays)
+    total += d;
+  const QString each = *lo == *hi ? QString("%1 ms each").arg(*lo)
+                                  : QString("%1–%2 ms").arg(*lo).arg(*hi);
+  return QString("%1, %2 s in all").arg(each).arg(total / 1000.0, 0, 'f', 1);
+}
+
 // Rebuild the info panel for the current file, if it has been created.
 // A hidden panel is just dropped; it's rebuilt when next shown.
 void ImageViewer::refreshInfoPanel() {
@@ -1312,6 +1555,16 @@ void ImageViewer::createInfoPanel() {
     int w = m_label->originalSize().width();
     int h = m_label->originalSize().height();
     addRow("Dimensions:", QString("%1 × %2 px").arg(w).arg(h));
+  }
+  if (m_frameTotal > 1) {
+    const int loaded = m_label->frameCount();
+    const QString kind = m_animated ? "animated" : "pages";
+    addRow("Frames:", loaded < m_frameTotal
+                          ? QString("%1 of %2 loaded (%3)")
+                                .arg(loaded).arg(m_frameTotal).arg(kind)
+                          : QString("%1 (%2)").arg(m_frameTotal).arg(kind));
+    if (m_animated && loaded > 1)
+      addRow("Frame delays:", frameDelaysText());
   }
   layout->addLayout(form);
 
@@ -1482,7 +1735,24 @@ void ImageViewer::toggleInterpolation() {
 // "... [area, inverted, γ 1.68, sat 60%, fit 0.421×]". The
 // mode is shown because it changes what the pixels mean; three decimals so a
 // near-1 wheel zoom can't be mistaken for exactly 1:1.
+// The status bar's key hints. For an animation or multi-page image ←/→
+// step through frames, so the hints show PgUp/PgDn for switching images
+// and Space for playing; otherwise just ←/→.
+void ImageViewer::updateHints() {
+  const bool frames = m_label && m_label->frameCount() > 1;
+  const QString text =
+      QStringLiteral("help: ?  |  open: o  |  paste: ctrl+v  |  info: m  |  "
+                     "quit: q  |  zoom: - + 0 r  |  pan: ← ↑ → ↓  |  ") +
+      (frames ? QStringLiteral("prev/next: pgup pgdn  |  frames: ← →  |  "
+                               "play: space  |  ")
+              : QStringLiteral("prev/next: ← →  |  ")) +
+      QStringLiteral("fullscreen: f");
+  if (m_hintLabel->text() != text)
+    m_hintLabel->setText(text);
+}
+
 void ImageViewer::updateWindowTitle() {
+  updateHints();
   if (m_folder.isEmpty() && !m_pasted) { // nothing opened yet
     setWindowTitle("Image Viewer");
     if (m_viewInfoLabel)
@@ -1520,6 +1790,11 @@ void ImageViewer::updateWindowTitle() {
     file = QFileInfo(m_imagePath).fileName();
   if (m_folderIndex >= 0)
     file += QString(" (%1/%2)").arg(m_folderIndex + 1).arg(m_folderCount);
+  if (m_label->frameCount() > 1)
+    file += QString(", frame %1/%2%3")
+                .arg(m_label->frameIndex() + 1)
+                .arg(m_label->frameCount())
+                .arg(m_playing ? ", playing" : "");
   setWindowTitle(QString("%1 – Image Viewer [%2]").arg(file, info));
   // Same info for the status bar, used in fullscreen.
   if (m_viewInfoLabel)
@@ -1739,10 +2014,21 @@ void ImageViewer::updateHelpPanel() {
       {"Backspace", "Reset all tone settings above", {}},
       {"", "Images", {}},
       {"← →", "Previous, next image (when it fits)", {}},
+      {"PgUp  PgDn", "Previous, next image (always)", {}},
       {"o", "Open an image", {}},
       {"Ctrl+V", "Paste an image (e.g. copied in a browser)", {}},
       {"s", "Save the view as PNG", {}},
       {"Shift+s", "Save the view as…", {}},
+      {"", "Animations and multi-page images", {}},
+      {"← →", "Previous, next frame (when it fits)",
+       m_label->frameCount() > 1 ? QString("%1/%2")
+                                       .arg(m_label->frameIndex() + 1)
+                                       .arg(m_label->frameCount())
+                                 : QString()},
+      {"Home  End", "First, last frame", {}},
+      {"Space", "Play, pause",
+       m_label->frameCount() > 1 ? (m_playing ? "playing" : "paused")
+                                 : QString()},
       {"", "Window", {}},
       {"m", "Info panel", {}},
       {"f", "Fullscreen", {}},
@@ -1859,6 +2145,9 @@ bool ImageViewer::handleShortcutKey(QKeyEvent *event) {
   case Qt::Key_B:
     toggleSaturationMode();
     return true;
+  case Qt::Key_Space:
+    togglePlayback();
+    return true;
   // Not with Ctrl, so Ctrl+Z / Ctrl+X / Ctrl+C still undo, cut and copy,
   // e.g. in the metadata table.
   case Qt::Key_Z:
@@ -1925,15 +2214,35 @@ bool ImageViewer::eventFilter(QObject *watched, QEvent *event) {
 void ImageViewer::keyPressEvent(QKeyEvent *event) {
   if (handleShortcutKey(event))
     return;
-  if (!(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier)) &&
-      !m_label->canPan()) {
-    if (event->key() == Qt::Key_Left) {
-      showAdjacentImage(-1);
+  if (!(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier))) {
+    // In an animation or multi-page file ←/→ step through the frames, and
+    // PgUp/PgDn switch images; they switch images at any zoom.
+    const bool frames = m_label->frameCount() > 1;
+    switch (event->key()) {
+    case Qt::Key_PageUp:
+    case Qt::Key_PageDown:
+      showAdjacentImage(event->key() == Qt::Key_PageDown ? 1 : -1);
       return;
-    }
-    if (event->key() == Qt::Key_Right) {
-      showAdjacentImage(1);
-      return;
+    case Qt::Key_Home:
+    case Qt::Key_End:
+      if (frames) {
+        goToFrame(event->key() == Qt::Key_Home ? 0 : m_label->frameCount() - 1);
+        return;
+      }
+      break;
+    case Qt::Key_Left:
+    case Qt::Key_Right:
+      if (!m_label->canPan()) {
+        const int delta = event->key() == Qt::Key_Right ? 1 : -1;
+        if (frames)
+          stepFrame(delta);
+        else
+          showAdjacentImage(delta);
+        return;
+      }
+      break;
+    default:
+      break;
     }
   }
   QMainWindow::keyPressEvent(event);
